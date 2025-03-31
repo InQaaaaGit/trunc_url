@@ -6,15 +6,14 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yandex-Practicum/go-musthave-shortener-tpl/internal/config"
-	"github.com/Yandex-Practicum/go-musthave-shortener-tpl/internal/service"
+	"github.com/InQaaaaGit/trunc_url.git/internal/app"
 )
 
 type Handler struct {
-	urlService *service.URLService
+	urlService *app.URLService
 }
 
-func NewHandler(urlService *service.URLService) *Handler {
+func NewHandler(urlService *app.URLService) *Handler {
 	return &Handler{
 		urlService: urlService,
 	}
@@ -104,8 +103,8 @@ func (h *Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	cfg := config.NewConfig()
-	urlService := service.NewURLService()
+	cfg := app.NewConfig()
+	urlService := app.NewURLService()
 	handler := NewHandler(urlService)
 
 	http.HandleFunc("/", handler.handleRequest)
