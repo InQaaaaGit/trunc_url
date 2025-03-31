@@ -6,14 +6,15 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/InQaaaaGit/trunc_url.git/internal/app"
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 )
 
 type Handler struct {
-	urlService *app.URLService
+	urlService *service.URLService
 }
 
-func NewHandler(urlService *app.URLService) *Handler {
+func NewHandler(urlService *service.URLService) *Handler {
 	return &Handler{
 		urlService: urlService,
 	}
@@ -103,8 +104,8 @@ func (h *Handler) handleRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	cfg := app.NewConfig()
-	urlService := app.NewURLService()
+	cfg := config.NewConfig()
+	urlService := service.NewURLService()
 	handler := NewHandler(urlService)
 
 	http.HandleFunc("/", handler.handleRequest)
