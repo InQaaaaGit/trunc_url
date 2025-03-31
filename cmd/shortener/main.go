@@ -27,7 +27,7 @@ func (h *Handler) handleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	if contentType != "text/plain" {
+	if !strings.HasPrefix(contentType, "text/plain") {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
