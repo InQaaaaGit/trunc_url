@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -20,11 +21,6 @@ func NewHandler(urlService service.URLService) *Handler {
 }
 
 func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST method is allowed for URL shortening", http.StatusMethodNotAllowed)
-		return
-	}
-
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, "text/plain") {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
@@ -63,13 +59,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Получен запрос: метод=%s, путь=%s", r.Method, r.URL.Path)
 
-	if r.Method != http.MethodGet {
-		log.Printf("Неверный метод запроса: %s", r.Method)
-		http.Error(w, "Only GET method is allowed for URL expansion", http.StatusMethodNotAllowed)
-		return
-	}
-
-	shortID := strings.TrimPrefix(r.URL.Path, "/")
+	shortID := chi.URLParam(r, "shortID")
 	log.Printf("Извлечен shortID: %s", shortID)
 
 	if shortID == "" {
@@ -91,13 +81,4 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Установка заголовка Location: %s", originalURL)
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
-}
-
-func (h *Handler) HandleRequest(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Начало обработки запроса: %s %s", r.Method, r.URL.Path)
-	if r.URL.Path == "/" {
-		h.HandleCreateURL(w, r)
-	} else {
-		h.HandleRedirect(w, r)
-	}
 }

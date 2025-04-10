@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 type mockURLService struct {
@@ -15,10 +16,16 @@ type mockURLService struct {
 }
 
 func (m *mockURLService) CreateShortURL(url string) (string, error) {
+	if m.createShortURLFunc == nil {
+		panic("createShortURLFunc is nil in mockURLService")
+	}
 	return m.createShortURLFunc(url)
 }
 
 func (m *mockURLService) GetOriginalURL(shortID string) (string, bool) {
+	if m.getOriginalURLFunc == nil {
+		panic("getOriginalURLFunc is nil in mockURLService")
+	}
 	return m.getOriginalURLFunc(shortID)
 }
 
@@ -75,8 +82,11 @@ func TestHandleCreateURL(t *testing.T) {
 			req.Header.Set("Content-Type", tt.contentType)
 			rr := httptest.NewRecorder()
 
+			router := chi.NewRouter()
 			handler := NewHandler(tt.mockService)
-			handler.HandleCreateURL(rr, req)
+			router.Post("/", handler.HandleCreateURL)
+
+			router.ServeHTTP(rr, req)
 
 			if status := rr.Code; status != tt.expectedStatus {
 				t.Errorf("handler returned wrong status code: got %v want %v",
@@ -101,7 +111,10 @@ func TestHandleRedirect(t *testing.T) {
 			expectedStatus: http.StatusTemporaryRedirect,
 			mockService: &mockURLService{
 				getOriginalURLFunc: func(shortID string) (string, bool) {
-					return "https://example.com", true
+					if shortID == "abc123" {
+						return "https://example.com", true
+					}
+					return "", false
 				},
 			},
 		},
@@ -124,10 +137,10 @@ func TestHandleRedirect(t *testing.T) {
 			},
 		},
 		{
-			name:           "Empty short ID",
+			name:           "Empty short ID in path",
 			method:         http.MethodGet,
 			path:           "/",
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			mockService:    &mockURLService{},
 		},
 	}
@@ -137,8 +150,11 @@ func TestHandleRedirect(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			rr := httptest.NewRecorder()
 
+			router := chi.NewRouter()
 			handler := NewHandler(tt.mockService)
-			handler.HandleRedirect(rr, req)
+			router.Get("/{shortID}", handler.HandleRedirect)
+
+			router.ServeHTTP(rr, req)
 
 			if status := rr.Code; status != tt.expectedStatus {
 				t.Errorf("handler returned wrong status code: got %v want %v",
