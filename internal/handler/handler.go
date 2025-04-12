@@ -12,11 +12,13 @@ import (
 
 type Handler struct {
 	urlService service.URLService
+	baseURL    string
 }
 
-func NewHandler(urlService service.URLService) *Handler {
+func NewHandler(urlService service.URLService, baseURL string) *Handler {
 	return &Handler{
 		urlService: urlService,
+		baseURL:    baseURL,
 	}
 }
 
@@ -48,7 +50,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL := "http://localhost:8080/" + shortID
+	shortURL := h.baseURL + "/" + shortID
 	log.Printf("Создана короткая ссылка: %s", shortURL)
 
 	w.Header().Set("Content-Type", "text/plain")

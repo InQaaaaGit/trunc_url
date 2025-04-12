@@ -76,6 +76,9 @@ func TestHandleCreateURL(t *testing.T) {
 		},
 	}
 
+	// Задаем базовый URL для тестов
+	baseURL := "http://test.co"
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", bytes.NewBufferString(tt.body))
@@ -83,7 +86,8 @@ func TestHandleCreateURL(t *testing.T) {
 			rr := httptest.NewRecorder()
 
 			router := chi.NewRouter()
-			handler := NewHandler(tt.mockService)
+			// Передаем baseURL при создании хэндлера
+			handler := NewHandler(tt.mockService, baseURL)
 			router.Post("/", handler.HandleCreateURL)
 
 			router.ServeHTTP(rr, req)
@@ -91,6 +95,15 @@ func TestHandleCreateURL(t *testing.T) {
 			if status := rr.Code; status != tt.expectedStatus {
 				t.Errorf("handler returned wrong status code: got %v want %v",
 					status, tt.expectedStatus)
+			}
+
+			// Дополнительная проверка тела ответа для успешного случая
+			if tt.name == "Valid POST request" && rr.Code == http.StatusCreated {
+				expectedBody := baseURL + "/abc123"
+				if body := rr.Body.String(); body != expectedBody {
+					t.Errorf("handler returned wrong body: got %v want %v",
+						body, expectedBody)
+				}
 			}
 		})
 	}
@@ -145,13 +158,17 @@ func TestHandleRedirect(t *testing.T) {
 		},
 	}
 
+	// Задаем базовый URL (хотя он здесь не используется напрямую хэндлером, но нужен для конструктора)
+	baseURL := "http://unused.test"
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
 			rr := httptest.NewRecorder()
 
 			router := chi.NewRouter()
-			handler := NewHandler(tt.mockService)
+			// Передаем baseURL при создании хэндлера
+			handler := NewHandler(tt.mockService, baseURL)
 			router.Get("/{shortID}", handler.HandleRedirect)
 
 			router.ServeHTTP(rr, req)
