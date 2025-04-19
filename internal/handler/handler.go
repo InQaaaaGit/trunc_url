@@ -10,6 +10,13 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+const (
+	contentTypePlain   = "text/plain"
+	emptyURLMessage    = "Empty URL"
+	invalidURLMessage  = "Invalid URL"
+	urlNotFoundMessage = "URL not found"
+)
+
 // URLService определяет интерфейс для работы с URL
 type URLService interface {
 	CreateShortURL(url string) (string, error)
@@ -35,7 +42,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, "text/plain") {
+	if !strings.HasPrefix(contentType, contentTypePlain) {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
@@ -55,7 +62,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Получен URL в POST запросе: %s", originalURL)
 
 	if originalURL == "" {
-		http.Error(w, "Empty URL", http.StatusBadRequest)
+		http.Error(w, emptyURLMessage, http.StatusBadRequest)
 		return
 	}
 
@@ -84,7 +91,7 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 
 	if shortID == "" {
 		log.Printf("Пустой shortID")
-		http.Error(w, "Invalid URL", http.StatusBadRequest)
+		http.Error(w, invalidURLMessage, http.StatusBadRequest)
 		return
 	}
 
@@ -94,7 +101,7 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 
 	if !exists {
 		log.Printf("URL не найден для shortID: %s", shortID)
-		http.Error(w, "URL not found", http.StatusNotFound)
+		http.Error(w, urlNotFoundMessage, http.StatusNotFound)
 		return
 	}
 

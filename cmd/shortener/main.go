@@ -22,7 +22,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
-	defer logger.Sync()
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			log.Printf("Failed to sync logger: %v", err)
+		}
+	}()
 
 	// Инициализация сервисов и обработчиков
 	urlService := service.NewURLService()
@@ -48,7 +52,7 @@ func main() {
 
 	// Запуск сервера
 	logger.Info("Starting server", zap.String("address", cfg.ServerAddress))
-	if err := http.ListenAndServe(cfg.ServerAddress, r); err != nil {
+	if err := server.ListenAndServe(); err != nil {
 		logger.Fatal("Server failed to start", zap.Error(err))
 	}
 }
