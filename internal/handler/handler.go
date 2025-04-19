@@ -6,19 +6,25 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/go-chi/chi/v5"
 )
 
-type Handler struct {
-	urlService service.URLService
-	baseURL    string
+// URLService определяет интерфейс для работы с URL
+type URLService interface {
+	CreateShortURL(url string) (string, error)
+	GetOriginalURL(shortID string) (string, bool)
 }
 
-func NewHandler(urlService service.URLService, baseURL string) *Handler {
+type Handler struct {
+	urlService URLService
+	cfg        *config.Config
+}
+
+func NewHandler(urlService URLService, cfg *config.Config) *Handler {
 	return &Handler{
 		urlService: urlService,
-		baseURL:    baseURL,
+		cfg:        cfg,
 	}
 }
 
@@ -34,7 +40,11 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error reading request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			log.Printf("Ошибка при закрытии тела запроса: %v", err)
+		}
+	}()
 
 	originalURL := strings.TrimSpace(string(body))
 	log.Printf("Получен URL в POST запросе: %s", originalURL)
@@ -50,12 +60,15 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL := h.baseURL + "/" + shortID
+	shortURL := h.cfg.BaseURL + "/" + shortID
 	log.Printf("Создана короткая ссылка: %s", shortURL)
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(shortURL))
+	if _, err := w.Write([]byte(shortURL)); err != nil {
+		log.Printf("Ошибка при записи ответа: %v", err)
+		return
+	}
 }
 
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
