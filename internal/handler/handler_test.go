@@ -68,7 +68,11 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType:    "application/json",
 			body:           "https://example.com",
 			expectedStatus: http.StatusBadRequest,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				createShortURLFunc: func(url string) (string, error) {
+					return "", nil
+				},
+			},
 		},
 		{
 			name:           "Empty URL",
@@ -76,7 +80,11 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType:    "text/plain",
 			body:           "",
 			expectedStatus: http.StatusBadRequest,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				createShortURLFunc: func(url string) (string, error) {
+					return "", nil
+				},
+			},
 		},
 	}
 
@@ -130,7 +138,11 @@ func TestHandleRedirect(t *testing.T) {
 			name:           "Invalid method",
 			path:           "/abc123",
 			expectedStatus: http.StatusMethodNotAllowed,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(shortID string) (string, bool) {
+					return "", false
+				},
+			},
 		},
 		{
 			name:           "URL not found",
@@ -146,7 +158,11 @@ func TestHandleRedirect(t *testing.T) {
 			name:           "Empty short ID in path",
 			path:           "/",
 			expectedStatus: http.StatusNotFound,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(shortID string) (string, bool) {
+					return "", false
+				},
+			},
 		},
 	}
 
@@ -156,7 +172,12 @@ func TestHandleRedirect(t *testing.T) {
 			h := NewHandler(tt.mockService, cfg)
 			r.Get("/{shortID}", h.HandleRedirect)
 
-			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			var req *http.Request
+			if tt.name == "Invalid method" {
+				req = httptest.NewRequest(http.MethodPost, tt.path, nil)
+			} else {
+				req = httptest.NewRequest(http.MethodGet, tt.path, nil)
+			}
 			w := httptest.NewRecorder()
 
 			r.ServeHTTP(w, req)

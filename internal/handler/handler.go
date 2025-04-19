@@ -29,6 +29,11 @@ func NewHandler(urlService URLService, cfg *config.Config) *Handler {
 }
 
 func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, "text/plain") {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
