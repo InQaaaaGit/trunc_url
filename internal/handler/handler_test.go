@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -30,13 +30,17 @@ func (m *mockURLService) GetOriginalURL(shortID string) (string, bool) {
 }
 
 func TestHandleCreateURL(t *testing.T) {
+	cfg := &config.Config{
+		BaseURL: "http://localhost:8080",
+	}
+
 	tests := []struct {
 		name           string
 		method         string
 		contentType    string
 		body           string
 		expectedStatus int
-		mockService    service.URLService
+		mockService    URLService
 	}{
 		{
 			name:           "Valid POST request",
@@ -64,7 +68,11 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType:    "application/json",
 			body:           "https://example.com",
 			expectedStatus: http.StatusBadRequest,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				createShortURLFunc: func(url string) (string, error) {
+					return "", nil
+				},
+			},
 		},
 		{
 			name:           "Empty URL",
@@ -72,35 +80,31 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType:    "text/plain",
 			body:           "",
 			expectedStatus: http.StatusBadRequest,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				createShortURLFunc: func(url string) (string, error) {
+					return "", nil
+				},
+			},
 		},
 	}
-
-	// Задаем базовый URL для тестов
-	baseURL := "http://test.co"
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", bytes.NewBufferString(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
-			rr := httptest.NewRecorder()
+			w := httptest.NewRecorder()
 
-			router := chi.NewRouter()
-			// Передаем baseURL при создании хэндлера
-			handler := NewHandler(tt.mockService, baseURL)
-			router.Post("/", handler.HandleCreateURL)
+			h := NewHandler(tt.mockService, cfg)
+			h.HandleCreateURL(w, req)
 
-			router.ServeHTTP(rr, req)
-
-			if status := rr.Code; status != tt.expectedStatus {
-				t.Errorf("handler returned wrong status code: got %v want %v",
-					status, tt.expectedStatus)
+			if w.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 
 			// Дополнительная проверка тела ответа для успешного случая
-			if tt.name == "Valid POST request" && rr.Code == http.StatusCreated {
-				expectedBody := baseURL + "/abc123"
-				if body := rr.Body.String(); body != expectedBody {
+			if tt.name == "Valid POST request" && w.Code == http.StatusCreated {
+				expectedBody := cfg.BaseURL + "/abc123"
+				if body := w.Body.String(); body != expectedBody {
 					t.Errorf("handler returned wrong body: got %v want %v",
 						body, expectedBody)
 				}
@@ -110,37 +114,38 @@ func TestHandleCreateURL(t *testing.T) {
 }
 
 func TestHandleRedirect(t *testing.T) {
+	cfg := &config.Config{
+		BaseURL: "http://localhost:8080",
+	}
+
 	tests := []struct {
 		name           string
-		method         string
 		path           string
 		expectedStatus int
-		mockService    service.URLService
+		mockService    URLService
 	}{
 		{
 			name:           "Valid redirect",
-			method:         http.MethodGet,
 			path:           "/abc123",
 			expectedStatus: http.StatusTemporaryRedirect,
 			mockService: &mockURLService{
 				getOriginalURLFunc: func(shortID string) (string, bool) {
-					if shortID == "abc123" {
-						return "https://example.com", true
-					}
-					return "", false
+					return "https://example.com", true
 				},
 			},
 		},
 		{
 			name:           "Invalid method",
-			method:         http.MethodPost,
 			path:           "/abc123",
 			expectedStatus: http.StatusMethodNotAllowed,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(shortID string) (string, bool) {
+					return "", false
+				},
+			},
 		},
 		{
 			name:           "URL not found",
-			method:         http.MethodGet,
 			path:           "/nonexistent",
 			expectedStatus: http.StatusNotFound,
 			mockService: &mockURLService{
@@ -151,31 +156,34 @@ func TestHandleRedirect(t *testing.T) {
 		},
 		{
 			name:           "Empty short ID in path",
-			method:         http.MethodGet,
 			path:           "/",
 			expectedStatus: http.StatusNotFound,
-			mockService:    &mockURLService{},
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(shortID string) (string, bool) {
+					return "", false
+				},
+			},
 		},
 	}
 
-	// Задаем базовый URL (хотя он здесь не используется напрямую хэндлером, но нужен для конструктора)
-	baseURL := "http://unused.test"
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, nil)
-			rr := httptest.NewRecorder()
+			r := chi.NewRouter()
+			h := NewHandler(tt.mockService, cfg)
+			r.Get("/{shortID}", h.HandleRedirect)
 
-			router := chi.NewRouter()
-			// Передаем baseURL при создании хэндлера
-			handler := NewHandler(tt.mockService, baseURL)
-			router.Get("/{shortID}", handler.HandleRedirect)
+			var req *http.Request
+			if tt.name == "Invalid method" {
+				req = httptest.NewRequest(http.MethodPost, tt.path, nil)
+			} else {
+				req = httptest.NewRequest(http.MethodGet, tt.path, nil)
+			}
+			w := httptest.NewRecorder()
 
-			router.ServeHTTP(rr, req)
+			r.ServeHTTP(w, req)
 
-			if status := rr.Code; status != tt.expectedStatus {
-				t.Errorf("handler returned wrong status code: got %v want %v",
-					status, tt.expectedStatus)
+			if w.Code != tt.expectedStatus {
+				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
 			}
 		})
 	}
