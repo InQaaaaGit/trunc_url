@@ -1,0 +1,23 @@
+linters:
+  enable:
+    - errcheck
+    - gofmt
+    - govet
+    - staticcheck
+    - gosimple
+    - unused
+    - ineffassign
+    - typecheck
+    - bodyclose
+    - gocritic
+    - gosec
+
+issues:
+  exclude-dirs:
+    - vendor
+    - testdata
+    - .git
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck 

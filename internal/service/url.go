@@ -4,18 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"log"
+	"sync"
 )
 
-type URLService interface {
-	CreateShortURL(url string) (string, error)
-	GetOriginalURL(shortID string) (string, bool)
-}
-
 type URLServiceImpl struct {
-	urls map[string]string
+	urls  map[string]string
+	mutex sync.RWMutex
 }
 
-func NewURLService() URLService {
+func NewURLService() *URLServiceImpl {
 	return &URLServiceImpl{
 		urls: make(map[string]string),
 	}
@@ -31,22 +28,23 @@ func (s *URLServiceImpl) GenerateShortID() (string, error) {
 }
 
 func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
-	log.Printf("Создание короткой ссылки для: %s", originalURL)
 	shortID, err := s.GenerateShortID()
 	if err != nil {
 		return "", err
 	}
 
+	s.mutex.Lock()
 	s.urls[shortID] = originalURL
-	log.Printf("Создано соответствие: %s -> %s", shortID, originalURL)
-	log.Printf("Текущее состояние urls: %v", s.urls)
+	s.mutex.Unlock()
+
+	log.Printf("Created mapping: %s -> %s", shortID, originalURL)
 	return shortID, nil
 }
 
 func (s *URLServiceImpl) GetOriginalURL(shortID string) (string, bool) {
-	log.Printf("Поиск URL для shortID: %s", shortID)
-	log.Printf("Текущее состояние urls: %v", s.urls)
+	s.mutex.RLock()
 	originalURL, exists := s.urls[shortID]
-	log.Printf("Результат поиска - URL: %s, существует: %v", originalURL, exists)
+	s.mutex.RUnlock()
+
 	return originalURL, exists
 }
