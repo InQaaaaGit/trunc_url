@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"io"
 	"log"
 	"net/http"
@@ -86,6 +87,11 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Получен запрос: метод=%s, путь=%s", r.Method, r.URL.Path)
 
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	shortID := chi.URLParam(r, "shortID")
 	log.Printf("Извлечен shortID: %s", shortID)
 
@@ -108,4 +114,61 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Установка заголовка Location: %s", originalURL)
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+type ShortenRequest struct {
+	URL string `json:"url"`
+}
+
+type ShortenResponse struct {
+	Result string `json:"result"`
+}
+
+func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/json") {
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		return
+	}
+
+	var req ShortenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			log.Printf("Ошибка при закрытии тела запроса: %v", err)
+		}
+	}()
+
+	if req.URL == "" {
+		http.Error(w, emptyURLMessage, http.StatusBadRequest)
+		return
+	}
+
+	shortID, err := h.urlService.CreateShortURL(req.URL)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	shortURL := h.cfg.BaseURL + "/" + shortID
+	log.Printf("Создана короткая ссылка: %s", shortURL)
+
+	response := ShortenResponse{
+		Result: shortURL,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Ошибка при записи ответа: %v", err)
+		return
+	}
 }

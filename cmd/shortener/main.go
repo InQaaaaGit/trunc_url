@@ -40,6 +40,7 @@ func main() {
 
 	// Регистрация маршрутов
 	r.Post("/", handler.HandleCreateURL)
+	r.Post("/api/shorten", handler.HandleShortenURL)
 	r.Get("/{shortID}", handler.HandleRedirect)
 
 	server := &http.Server{
