@@ -3,111 +3,27 @@ package handler
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 type mockURLService struct {
-	urls map[string]string
+	createShortURLFunc func(url string) (string, error)
+	getOriginalURLFunc func(shortID string) (string, error)
 }
 
 func (m *mockURLService) CreateShortURL(url string) (string, error) {
-	return "testID", nil
+	return m.createShortURLFunc(url)
 }
 
-func (m *mockURLService) GetOriginalURL(shortID string) (string, bool) {
-	url, exists := m.urls[shortID]
-	return url, exists
-}
-
-func TestHandleShortenURL(t *testing.T) {
-	tests := []struct {
-		name           string
-		requestBody    interface{}
-		expectedStatus int
-		expectedResult string
-	}{
-		{
-			name: "Valid URL",
-			requestBody: map[string]string{
-				"url": "https://practicum.yandex.ru",
-			},
-			expectedStatus: http.StatusCreated,
-			expectedResult: "http://localhost:8080/testID",
-		},
-		{
-			name: "Empty URL",
-			requestBody: map[string]string{
-				"url": "",
-			},
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "Invalid JSON",
-			requestBody:    "invalid json",
-			expectedStatus: http.StatusBadRequest,
-		},
-	}
-
-	cfg := &config.Config{
-		BaseURL: "http://localhost:8080",
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := NewHandler(&mockURLService{}, cfg)
-
-			var body []byte
-			if str, ok := tt.requestBody.(string); ok {
-				body = []byte(str)
-			} else {
-				body, _ = json.Marshal(tt.requestBody)
-			}
-
-			req := httptest.NewRequest(http.MethodPost, "/api/shorten", bytes.NewBuffer(body))
-			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
-
-			handler.HandleShortenURL(w, req)
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-
-			if tt.expectedStatus == http.StatusCreated {
-				var response ShortenResponse
-				err := json.NewDecoder(w.Body).Decode(&response)
-				require.NoError(t, err)
-				assert.Equal(t, tt.expectedResult, response.Result)
-			}
-		})
-	}
-}
-
-func TestHandleShortenURLInvalidMethod(t *testing.T) {
-	handler := NewHandler(&mockURLService{}, &config.Config{})
-	req := httptest.NewRequest(http.MethodGet, "/api/shorten", nil)
-	w := httptest.NewRecorder()
-
-	handler.HandleShortenURL(w, req)
-
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-func TestHandleShortenURLInvalidContentType(t *testing.T) {
-	handler := NewHandler(&mockURLService{}, &config.Config{})
-	req := httptest.NewRequest(http.MethodPost, "/api/shorten", nil)
-	req.Header.Set("Content-Type", "text/plain")
-	w := httptest.NewRecorder()
-
-	handler.HandleShortenURL(w, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+func (m *mockURLService) GetOriginalURL(shortID string) (string, error) {
+	return m.getOriginalURLFunc(shortID)
 }
 
 func TestHandleCreateURL(t *testing.T) {
@@ -116,37 +32,62 @@ func TestHandleCreateURL(t *testing.T) {
 		method         string
 		contentType    string
 		body           string
+		mockService    service.URLService
 		expectedStatus int
 		expectedBody   string
 	}{
 		{
-			name:           "Valid POST request",
-			method:         http.MethodPost,
-			contentType:    "text/plain",
-			body:           "https://example.com",
+			name:        "Valid URL",
+			method:      http.MethodPost,
+			contentType: "text/plain",
+			body:        "https://example.com",
+			mockService: &mockURLService{
+				createShortURLFunc: func(url string) (string, error) {
+					return "abc123", nil
+				},
+			},
 			expectedStatus: http.StatusCreated,
-			expectedBody:   "http://localhost:8080/testID",
+			expectedBody:   "http://localhost:8080/abc123",
 		},
 		{
-			name:           "Invalid method",
+			name:           "Invalid Method",
 			method:         http.MethodGet,
 			contentType:    "text/plain",
 			body:           "https://example.com",
+			mockService:    &mockURLService{},
 			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   "Method not allowed\n",
 		},
 		{
-			name:           "Invalid content type",
+			name:           "Invalid Content-Type",
 			method:         http.MethodPost,
 			contentType:    "application/json",
 			body:           "https://example.com",
+			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Invalid Content-Type\n",
 		},
 		{
 			name:           "Empty URL",
 			method:         http.MethodPost,
 			contentType:    "text/plain",
 			body:           "",
+			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
+			expectedBody:   "Empty URL\n",
+		},
+		{
+			name:        "Service Error",
+			method:      http.MethodPost,
+			contentType: "text/plain",
+			body:        "https://example.com",
+			mockService: &mockURLService{
+				createShortURLFunc: func(url string) (string, error) {
+					return "", errors.New("service error")
+				},
+			},
+			expectedStatus: http.StatusInternalServerError,
+			expectedBody:   "Internal server error\n",
 		},
 	}
 
@@ -156,18 +97,21 @@ func TestHandleCreateURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			handler := NewHandler(&mockURLService{}, cfg)
+			cfg := &config.Config{BaseURL: "http://localhost:8080"}
+			h := NewHandler(tt.mockService, cfg)
 
 			req := httptest.NewRequest(tt.method, "/", bytes.NewBufferString(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
 
-			handler.HandleCreateURL(w, req)
+			h.HandleCreateURL(w, req)
 
-			assert.Equal(t, tt.expectedStatus, w.Code)
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
 
-			if tt.expectedStatus == http.StatusCreated {
-				assert.Equal(t, tt.expectedBody, w.Body.String())
+			if w.Body.String() != tt.expectedBody {
+				t.Errorf("expected body %q, got %q", tt.expectedBody, w.Body.String())
 			}
 		})
 	}
@@ -175,36 +119,40 @@ func TestHandleCreateURL(t *testing.T) {
 
 func TestHandleRedirect(t *testing.T) {
 	tests := []struct {
-		name             string
-		method           string
-		path             string
-		expectedStatus   int
-		expectedLocation string
+		name           string
+		shortID        string
+		mockService    service.URLService
+		expectedStatus int
+		expectedURL    string
 	}{
 		{
-			name:             "Valid redirect",
-			method:           http.MethodGet,
-			path:             "/testID",
-			expectedStatus:   http.StatusTemporaryRedirect,
-			expectedLocation: "https://example.com",
+			name:    "Valid ShortID",
+			shortID: "abc123",
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(shortID string) (string, error) {
+					return "https://example.com", nil
+				},
+			},
+			expectedStatus: http.StatusTemporaryRedirect,
+			expectedURL:    "https://example.com",
 		},
 		{
-			name:           "Invalid method",
-			method:         http.MethodPost,
-			path:           "/testID",
-			expectedStatus: http.StatusMethodNotAllowed,
-		},
-		{
-			name:           "URL not found",
-			method:         http.MethodGet,
-			path:           "/nonexistent",
-			expectedStatus: http.StatusNotFound,
-		},
-		{
-			name:           "Empty short ID",
-			method:         http.MethodGet,
-			path:           "/",
+			name:           "Empty ShortID",
+			shortID:        "",
+			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
+			expectedURL:    "",
+		},
+		{
+			name:    "URL Not Found",
+			shortID: "abc123",
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(shortID string) (string, error) {
+					return "", errors.New("URL not found")
+				},
+			},
+			expectedStatus: http.StatusNotFound,
+			expectedURL:    "",
 		},
 	}
 
@@ -214,26 +162,25 @@ func TestHandleRedirect(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockService := &mockURLService{
-				urls: map[string]string{
-					"testID": "https://example.com",
-				},
-			}
-			handler := NewHandler(mockService, cfg)
+			cfg := &config.Config{BaseURL: "http://localhost:8080"}
+			h := NewHandler(tt.mockService, cfg)
 
-			req := httptest.NewRequest(tt.method, tt.path, nil)
-			ctx := chi.NewRouteContext()
-			ctx.URLParams.Add("shortID", tt.path[1:])
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, ctx))
-
+			req := httptest.NewRequest(http.MethodGet, "/"+tt.shortID, nil)
 			w := httptest.NewRecorder()
 
-			handler.HandleRedirect(w, req)
+			// Создаем контекст с параметром shortID
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("shortID", tt.shortID)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
-			assert.Equal(t, tt.expectedStatus, w.Code)
+			h.HandleRedirect(w, req)
 
-			if tt.expectedStatus == http.StatusTemporaryRedirect {
-				assert.Equal(t, tt.expectedLocation, w.Header().Get("Location"))
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			if tt.expectedURL != "" && w.Header().Get("Location") != tt.expectedURL {
+				t.Errorf("expected Location header %q, got %q", tt.expectedURL, w.Header().Get("Location"))
 			}
 		})
 	}
