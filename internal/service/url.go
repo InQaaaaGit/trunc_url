@@ -1,55 +1,48 @@
 package service
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
-	"log"
-	"math/rand"
-	"sync"
-	"time"
+	"errors"
+
+	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 )
 
-type URLServiceImpl struct {
-	urls  map[string]string
-	mutex sync.RWMutex
-	rnd   *rand.Rand
-	rndMu sync.Mutex
+// URLService определяет интерфейс сервиса для работы с URL
+type URLService interface {
+	CreateShortURL(originalURL string) (string, error)
+	GetOriginalURL(shortURL string) (string, error)
 }
 
+// URLServiceImpl реализует URLService
+type URLServiceImpl struct {
+	storage storage.URLStorage
+}
+
+// NewURLService создает новый экземпляр URLService
 func NewURLService() *URLServiceImpl {
 	return &URLServiceImpl{
-		urls: make(map[string]string),
-		rnd:  rand.New(rand.NewSource(time.Now().UnixNano())),
+		storage: storage.NewMemoryStorage(),
 	}
 }
 
-func (s *URLServiceImpl) GenerateShortID() (string, error) {
-	b := make([]byte, 8)
-	s.rndMu.Lock()
-	for i := range b {
-		b[i] = byte(s.rnd.Intn(256))
-	}
-	s.rndMu.Unlock()
-	return base64.URLEncoding.EncodeToString(b)[:8], nil
-}
-
+// CreateShortURL создает короткий URL из оригинального
 func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
-	shortID, err := s.GenerateShortID()
+	if originalURL == "" {
+		return "", errors.New("empty URL")
+	}
+	hash := sha256.Sum256([]byte(originalURL))
+	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
+
+	err := s.storage.Save(shortURL, originalURL)
 	if err != nil {
 		return "", err
 	}
 
-	s.mutex.Lock()
-	s.urls[shortID] = originalURL
-	s.mutex.Unlock()
-
-	log.Printf("Created mapping: %s -> %s", shortID, originalURL)
-	return shortID, nil
+	return shortURL, nil
 }
 
-func (s *URLServiceImpl) GetOriginalURL(shortID string) (string, bool) {
-	s.mutex.RLock()
-	originalURL, exists := s.urls[shortID]
-	s.mutex.RUnlock()
-
-	return originalURL, exists
+// GetOriginalURL получает оригинальный URL по короткому
+func (s *URLServiceImpl) GetOriginalURL(shortURL string) (string, error) {
+	return s.storage.Get(shortURL)
 }

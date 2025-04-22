@@ -56,8 +56,8 @@ func TestConcurrentAccess(t *testing.T) {
 		go func(i int) {
 			defer opsWg.Done()
 			shortID := shortIDs[i%len(shortIDs)]
-			_, exists := service.GetOriginalURL(shortID)
-			if !exists {
+			_, err := service.GetOriginalURL(shortID)
+			if err != nil {
 				select {
 				case errChan <- fmt.Errorf("URL not found for shortID: %s", shortID):
 				default:
@@ -118,8 +118,8 @@ func TestConcurrentReadWrite(t *testing.T) {
 		go func(i int) {
 			defer opsWg.Done()
 			shortID := shortIDs[i%len(shortIDs)]
-			originalURL, exists := service.GetOriginalURL(shortID)
-			if !exists {
+			originalURL, err := service.GetOriginalURL(shortID)
+			if err != nil {
 				select {
 				case errChan <- fmt.Errorf("URL not found for shortID: %s", shortID):
 				default:
@@ -149,7 +149,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 				return
 			}
 			// Проверяем, что созданный URL действительно существует
-			if _, exists := service.GetOriginalURL(shortID); !exists {
+			if _, err := service.GetOriginalURL(shortID); err != nil {
 				select {
 				case errChan <- fmt.Errorf("newly created URL %s not found", shortID):
 				default:
@@ -173,4 +173,95 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 	// Ждем завершения логирования
 	<-done
+}
+
+func TestCreateShortURL(t *testing.T) {
+	tests := []struct {
+		name        string
+		originalURL string
+		wantErr     bool
+		errMsg      string
+	}{
+		{
+			name:        "Valid URL",
+			originalURL: "https://example.com",
+			wantErr:     false,
+		},
+		{
+			name:        "Empty URL",
+			originalURL: "",
+			wantErr:     true,
+			errMsg:      "empty URL",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewURLService()
+			got, err := s.CreateShortURL(tt.originalURL)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CreateShortURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				if err.Error() != tt.errMsg {
+					t.Errorf("CreateShortURL() error message = %v, want %v", err.Error(), tt.errMsg)
+				}
+				return
+			}
+			if !tt.wantErr && got == "" {
+				t.Error("CreateShortURL() returned empty string for valid URL")
+			}
+		})
+	}
+}
+
+func TestGetOriginalURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		shortURL string
+		setup    func(*URLServiceImpl)
+		wantURL  string
+		wantErr  bool
+	}{
+		{
+			name:     "Existing URL",
+			shortURL: "abc123",
+			setup: func(s *URLServiceImpl) {
+				s.storage.Save("abc123", "https://example.com")
+			},
+			wantURL: "https://example.com",
+			wantErr: false,
+		},
+		{
+			name:     "Non-existing URL",
+			shortURL: "nonexistent",
+			setup:    func(s *URLServiceImpl) {},
+			wantURL:  "",
+			wantErr:  true,
+		},
+		{
+			name:     "Empty short URL",
+			shortURL: "",
+			setup:    func(s *URLServiceImpl) {},
+			wantURL:  "",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewURLService()
+			tt.setup(s)
+
+			got, err := s.GetOriginalURL(tt.shortURL)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetOriginalURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.wantURL {
+				t.Errorf("GetOriginalURL() = %v, want %v", got, tt.wantURL)
+			}
+		})
+	}
 }

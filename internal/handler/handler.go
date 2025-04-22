@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -17,11 +18,11 @@ type URLService interface {
 }
 
 type Handler struct {
-	urlService URLService
+	urlService service.URLService
 	cfg        *config.Config
 }
 
-func NewHandler(urlService URLService, cfg *config.Config) *Handler {
+func NewHandler(urlService service.URLService, cfg *config.Config) *Handler {
 	return &Handler{
 		urlService: urlService,
 		cfg:        cfg,
@@ -89,10 +90,8 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("Попытка получить оригинальный URL для shortID: %s", shortID)
-	originalURL, exists := h.urlService.GetOriginalURL(shortID)
-	log.Printf("Результат GetOriginalURL - существует: %v, URL: %s", exists, originalURL)
-
-	if !exists {
+	originalURL, err := h.urlService.GetOriginalURL(shortID)
+	if err != nil {
 		log.Printf("URL не найден для shortID: %s", shortID)
 		http.Error(w, "URL not found", http.StatusNotFound)
 		return
