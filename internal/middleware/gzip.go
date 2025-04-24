@@ -20,6 +20,12 @@ func GzipMiddleware(next http.Handler) http.Handler {
 
 		// Если запрос сжат, распаковываем его
 		if isGzipped {
+			// Проверяем, что тело запроса не пустое
+			if r.Body == nil {
+				http.Error(w, "Empty request body", http.StatusBadRequest)
+				return
+			}
+
 			gz, err := gzip.NewReader(r.Body)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -27,6 +33,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 			}
 			defer gz.Close()
 			r.Body = gz
+
 			// Устанавливаем правильный Content-Type
 			if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-gzip") {
 				r.Header.Set("Content-Type", "text/plain")
@@ -37,7 +44,12 @@ func GzipMiddleware(next http.Handler) http.Handler {
 		if supportsGzip {
 			w.Header().Set("Content-Encoding", "gzip")
 			gz := gzip.NewWriter(w)
-			defer gz.Close()
+			defer func() {
+				if err := gz.Close(); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}()
 
 			next.ServeHTTP(gzipResponseWriter{
 				Writer:         gz,
