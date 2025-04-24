@@ -91,10 +91,6 @@ func TestHandleCreateURL(t *testing.T) {
 		},
 	}
 
-	cfg := &config.Config{
-		BaseURL: "http://localhost:8080",
-	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{BaseURL: "http://localhost:8080"}
@@ -154,10 +150,6 @@ func TestHandleRedirect(t *testing.T) {
 			expectedStatus: http.StatusNotFound,
 			expectedURL:    "",
 		},
-	}
-
-	cfg := &config.Config{
-		BaseURL: "http://localhost:8080",
 	}
 
 	for _, tt := range tests {

@@ -5,13 +5,25 @@ import (
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/app"
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"go.uber.org/zap"
 )
 
 func main() {
+	// Инициализация логгера
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("Ошибка инициализации логгера: %v", err)
+	}
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			log.Printf("Ошибка синхронизации логгера: %v", err)
+		}
+	}()
+
 	// Инициализация конфигурации
 	cfg, err := config.NewConfig()
 	if err != nil {
-		log.Fatalf("Ошибка инициализации конфигурации: %v", err)
+		logger.Fatal("Ошибка инициализации конфигурации", zap.Error(err))
 	}
 
 	// Создание и настройка приложения
@@ -20,7 +32,7 @@ func main() {
 
 	// Запуск сервера
 	server := application.GetServer()
-	log.Printf("Сервер запускается на %s\n", cfg.ServerAddress)
+	logger.Info("Сервер запускается", zap.String("address", cfg.ServerAddress))
 	if err := server.ListenAndServe(); err != nil {
 		logger.Fatal("Server failed to start", zap.Error(err))
 	}
