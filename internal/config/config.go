@@ -8,25 +8,28 @@ import (
 
 // Config хранит конфигурацию приложения.
 type Config struct {
-	ServerAddress string `env:"SERVER_ADDRESS"` // Адрес для запуска HTTP-сервера
-	BaseURL       string `env:"BASE_URL"`       // Базовый адрес для сокращенных URL
+	ServerAddress   string `env:"SERVER_ADDRESS"` // Адрес для запуска HTTP-сервера
+	BaseURL         string `env:"BASE_URL"`       // Базовый адрес для сокращенных URL
+	FileStoragePath string `env:"FILE_STORAGE_PATH"`
 }
 
 // NewConfig инициализирует конфигурацию, читая флаги и переменные окружения.
 func NewConfig() (*Config, error) {
 	cfg := &Config{
-		ServerAddress: ":8080",                 // Значение по умолчанию
-		BaseURL:       "http://localhost:8080", // Значение по умолчанию
+		ServerAddress:   ":8080",
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "urls.json",
 	}
 
-	// 1. Определение флагов командной строки
-	flag.StringVar(&cfg.ServerAddress, "a", cfg.ServerAddress, "Адрес запуска HTTP-сервера (env: SERVER_ADDRESS)")
-	flag.StringVar(&cfg.BaseURL, "b", cfg.BaseURL, "Базовый адрес результирующего сокращённого URL (env: BASE_URL)")
+	// Определяем флаги
+	flag.StringVar(&cfg.ServerAddress, "a", cfg.ServerAddress, "адрес запуска HTTP-сервера")
+	flag.StringVar(&cfg.BaseURL, "b", cfg.BaseURL, "базовый URL для сокращенных ссылок")
+	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "путь к файлу для хранения URL")
 
-	// 2. Парсинг флагов командной строки
+	// Парсим флаги
 	flag.Parse()
 
-	// 3. Парсинг переменных окружения (имеет наивысший приоритет)
+	// Парсим переменные окружения (имеет наивысший приоритет)
 	if err := env.Parse(cfg); err != nil {
 		return nil, err
 	}

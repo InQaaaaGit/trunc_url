@@ -28,7 +28,9 @@ func main() {
 
 	// Создание и настройка приложения
 	application := app.New(cfg)
-	application.Configure()
+	if err := application.Configure(); err != nil {
+		logger.Fatal("Ошибка конфигурации приложения", zap.Error(err))
+	}
 
 	// Запуск сервера
 	server := application.GetServer()

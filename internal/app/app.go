@@ -25,14 +25,19 @@ func New(cfg *config.Config) *App {
 }
 
 // Configure настраивает все слои приложения
-func (a *App) Configure() {
+func (a *App) Configure() error {
 	// Инициализация сервисов и обработчиков
-	urlService := service.NewURLService()
+	urlService, err := service.NewURLService(a.config)
+	if err != nil {
+		return err
+	}
 	handler := handler.NewHandler(urlService, a.config)
 
 	// Регистрация маршрутов
 	a.router.Post("/", handler.HandleCreateURL)
 	a.router.Get("/{shortID}", handler.HandleRedirect)
+
+	return nil
 }
 
 // GetServer возвращает настроенный HTTP сервер

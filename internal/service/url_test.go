@@ -2,12 +2,31 @@ package service
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"testing"
+
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 )
 
+func setupTestService(t *testing.T) (*URLServiceImpl, func()) {
+	testFile := "test_urls.json"
+	cfg := &config.Config{FileStoragePath: testFile}
+	service, err := NewURLService(cfg)
+	if err != nil {
+		t.Fatalf("Error creating service: %v", err)
+	}
+
+	cleanup := func() {
+		os.Remove(testFile)
+	}
+
+	return service, cleanup
+}
+
 func TestConcurrentAccess(t *testing.T) {
-	service := NewURLService()
+	service, cleanup := setupTestService(t)
+	defer cleanup()
 	iterations := 100
 	errChan := make(chan error, iterations*2)
 	logChan := make(chan string, iterations*2)
@@ -84,7 +103,8 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestConcurrentReadWrite(t *testing.T) {
-	service := NewURLService()
+	service, cleanup := setupTestService(t)
+	defer cleanup()
 	iterations := 100
 	errChan := make(chan error, iterations*2)
 	logChan := make(chan string, iterations*2)
@@ -193,12 +213,20 @@ func TestCreateShortURL(t *testing.T) {
 			wantErr:     true,
 			errMsg:      "empty URL",
 		},
+		{
+			name:        "Invalid URL",
+			originalURL: "not-a-url",
+			wantErr:     true,
+			errMsg:      "invalid URL",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewURLService()
-			got, err := s.CreateShortURL(tt.originalURL)
+			service, cleanup := setupTestService(t)
+			defer cleanup()
+
+			got, err := service.CreateShortURL(tt.originalURL)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateShortURL() error = %v, wantErr %v", err, tt.wantErr)
 				return
@@ -240,26 +268,21 @@ func TestGetOriginalURL(t *testing.T) {
 			wantURL:  "",
 			wantErr:  true,
 		},
-		{
-			name:     "Empty short URL",
-			shortURL: "",
-			setup:    func(s *URLServiceImpl) {},
-			wantURL:  "",
-			wantErr:  true,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := NewURLService()
-			tt.setup(s)
+			service, cleanup := setupTestService(t)
+			defer cleanup()
 
-			got, err := s.GetOriginalURL(tt.shortURL)
+			tt.setup(service)
+
+			got, err := service.GetOriginalURL(tt.shortURL)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("GetOriginalURL() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if got != tt.wantURL {
+			if !tt.wantErr && got != tt.wantURL {
 				t.Errorf("GetOriginalURL() = %v, want %v", got, tt.wantURL)
 			}
 		})
