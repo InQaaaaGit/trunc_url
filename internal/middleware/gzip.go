@@ -27,6 +27,10 @@ func GzipMiddleware(next http.Handler) http.Handler {
 			}
 			defer gz.Close()
 			r.Body = gz
+			// Устанавливаем правильный Content-Type
+			if strings.HasPrefix(r.Header.Get("Content-Type"), "application/x-gzip") {
+				r.Header.Set("Content-Type", "text/plain")
+			}
 		}
 
 		// Если клиент поддерживает gzip, сжимаем ответ

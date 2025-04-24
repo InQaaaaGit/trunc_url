@@ -45,7 +45,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, contentTypePlain) {
+	if !strings.HasPrefix(contentType, contentTypePlain) && !strings.HasPrefix(contentType, "application/x-gzip") {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
