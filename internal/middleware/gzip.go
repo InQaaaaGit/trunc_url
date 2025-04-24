@@ -31,20 +31,15 @@ func GzipMiddleware(next http.Handler) http.Handler {
 
 		// Если клиент поддерживает gzip, сжимаем ответ
 		if supportsGzip {
-			// Проверяем Content-Type
-			contentType := r.Header.Get("Content-Type")
-			if strings.Contains(contentType, "application/json") || strings.Contains(contentType, "text/html") {
-				w.Header().Set("Content-Encoding", "gzip")
-				gz := gzip.NewWriter(w)
-				defer func() {
-					if err := gz.Close(); err != nil {
-						http.Error(w, err.Error(), http.StatusInternalServerError)
-						return
-					}
-				}()
-				next.ServeHTTP(gzipResponseWriter{Writer: gz, ResponseWriter: w}, r)
-				return
-			}
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+
+			next.ServeHTTP(gzipResponseWriter{
+				Writer:         gz,
+				ResponseWriter: w,
+			}, r)
+			return
 		}
 
 		next.ServeHTTP(w, r)
@@ -59,4 +54,12 @@ type gzipResponseWriter struct {
 
 func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
+}
+
+func (w gzipResponseWriter) WriteHeader(statusCode int) {
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w gzipResponseWriter) Header() http.Header {
+	return w.ResponseWriter.Header()
 }

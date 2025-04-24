@@ -6,6 +6,7 @@ import (
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/handler"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
 )
@@ -32,6 +33,9 @@ func (a *App) Configure() error {
 		return err
 	}
 	handler := handler.NewHandler(urlService, a.config)
+
+	// Подключаем middleware
+	a.router.Use(middleware.GzipMiddleware)
 
 	// Регистрация маршрутов
 	a.router.Post("/", handler.HandleCreateURL)
