@@ -14,6 +14,7 @@ import (
 
 const (
 	contentTypePlain   = "text/plain"
+	contentTypeJSON    = "application/json"
 	emptyURLMessage    = "Empty URL"
 	invalidURLMessage  = "Invalid URL"
 	urlNotFoundMessage = "URL not found"
@@ -22,7 +23,7 @@ const (
 // URLService определяет интерфейс для работы с URL
 type URLService interface {
 	CreateShortURL(url string) (string, error)
-	GetOriginalURL(shortID string) (string, bool)
+	GetOriginalURL(shortID string) (string, error)
 }
 
 type Handler struct {
@@ -77,7 +78,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	shortURL := h.cfg.BaseURL + "/" + shortID
 	log.Printf("Создана короткая ссылка: %s", shortURL)
 
-	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("Content-Type", contentTypePlain)
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write([]byte(shortURL)); err != nil {
 		log.Printf("Ошибка при записи ответа: %v", err)
@@ -93,7 +94,11 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Получаем shortID из пути URL или из параметра
 	shortID := chi.URLParam(r, "shortID")
+	if shortID == "" {
+		shortID = strings.TrimPrefix(r.URL.Path, "/")
+	}
 	log.Printf("Извлечен shortID: %s", shortID)
 
 	if shortID == "" {
@@ -130,7 +135,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, "application/json") {
+	if !strings.HasPrefix(contentType, contentTypeJSON) {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
@@ -164,7 +169,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		Result: shortURL,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Ошибка при записи ответа: %v", err)

@@ -35,6 +35,8 @@ func (a *App) Configure() error {
 
 	// Регистрация маршрутов
 	a.router.Post("/", handler.HandleCreateURL)
+	a.router.Post("/api/shorten", handler.HandleShortenURL)
+	a.router.Get("/", handler.HandleRedirect)
 	a.router.Get("/{shortID}", handler.HandleRedirect)
 
 	return nil
