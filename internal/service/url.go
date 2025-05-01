@@ -14,6 +14,7 @@ import (
 type URLService interface {
 	CreateShortURL(originalURL string) (string, error)
 	GetOriginalURL(shortURL string) (string, error)
+	GetStorage() storage.URLStorage
 }
 
 // URLServiceImpl реализует URLService
@@ -24,14 +25,26 @@ type URLServiceImpl struct {
 
 // NewURLService создает новый экземпляр URLService
 func NewURLService(cfg *config.Config) (*URLServiceImpl, error) {
-	// Создаем файловое хранилище
-	fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
-	if err != nil {
-		return nil, err
+	var store storage.URLStorage
+	var err error
+
+	// Проверяем, указана ли строка подключения к БД
+	if cfg.DatabaseDSN != "" {
+		// Создаем хранилище PostgreSQL
+		store, err = storage.NewPostgresStorage(cfg.DatabaseDSN)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Создаем файловое хранилище, если строка подключения не указана
+		store, err = storage.NewFileStorage(cfg.FileStoragePath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &URLServiceImpl{
-		storage: fileStorage,
+		storage: store,
 		config:  cfg,
 	}, nil
 }
@@ -62,4 +75,9 @@ func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
 // GetOriginalURL получает оригинальный URL по короткому
 func (s *URLServiceImpl) GetOriginalURL(shortURL string) (string, error) {
 	return s.storage.Get(shortURL)
+}
+
+// GetStorage возвращает хранилище URL
+func (s *URLServiceImpl) GetStorage() storage.URLStorage {
+	return s.storage
 }

@@ -3,13 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 const (
@@ -24,17 +24,21 @@ const (
 type URLService interface {
 	CreateShortURL(url string) (string, error)
 	GetOriginalURL(shortID string) (string, error)
+	GetStorage() interface{}
 }
 
 type Handler struct {
-	urlService service.URLService
-	cfg        *config.Config
+	service service.URLService
+	cfg     *config.Config
+	logger  *zap.Logger
 }
 
-func NewHandler(urlService service.URLService, cfg *config.Config) *Handler {
+func NewHandler(service service.URLService, cfg *config.Config) *Handler {
+	logger, _ := zap.NewProduction()
 	return &Handler{
-		urlService: urlService,
-		cfg:        cfg,
+		service: service,
+		cfg:     cfg,
+		logger:  logger,
 	}
 }
 
@@ -57,37 +61,37 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if err := r.Body.Close(); err != nil {
-			log.Printf("Ошибка при закрытии тела запроса: %v", err)
+			h.logger.Error("Ошибка при закрытии тела запроса", zap.Error(err))
 		}
 	}()
 
 	originalURL := strings.TrimSpace(string(body))
-	log.Printf("Получен URL в POST запросе: %s", originalURL)
+	h.logger.Info("Получен URL в POST запросе", zap.String("url", originalURL))
 
 	if originalURL == "" {
 		http.Error(w, emptyURLMessage, http.StatusBadRequest)
 		return
 	}
 
-	shortID, err := h.urlService.CreateShortURL(originalURL)
+	shortID, err := h.service.CreateShortURL(originalURL)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	shortURL := h.cfg.BaseURL + "/" + shortID
-	log.Printf("Создана короткая ссылка: %s", shortURL)
+	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
 
 	w.Header().Set("Content-Type", contentTypePlain)
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write([]byte(shortURL)); err != nil {
-		log.Printf("Ошибка при записи ответа: %v", err)
+		h.logger.Error("Ошибка при записи ответа", zap.Error(err))
 		return
 	}
 }
 
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
-	log.Printf("Получен запрос: метод=%s, путь=%s", r.Method, r.URL.Path)
+	h.logger.Info("Получен запрос", zap.String("метод", r.Method), zap.String("путь", r.URL.Path))
 
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -99,23 +103,23 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	if shortID == "" {
 		shortID = strings.TrimPrefix(r.URL.Path, "/")
 	}
-	log.Printf("Извлечен shortID: %s", shortID)
+	h.logger.Info("Извлечен shortID", zap.String("shortID", shortID))
 
 	if shortID == "" {
-		log.Printf("Пустой shortID")
+		h.logger.Warn("Пустой shortID")
 		http.Error(w, invalidURLMessage, http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("Попытка получить оригинальный URL для shortID: %s", shortID)
-	originalURL, err := h.urlService.GetOriginalURL(shortID)
+	h.logger.Info("Попытка получить оригинальный URL", zap.String("shortID", shortID))
+	originalURL, err := h.service.GetOriginalURL(shortID)
 	if err != nil {
-		log.Printf("URL не найден для shortID: %s", shortID)
+		h.logger.Warn("URL не найден", zap.String("shortID", shortID), zap.Error(err))
 		http.Error(w, urlNotFoundMessage, http.StatusNotFound)
 		return
 	}
 
-	log.Printf("Установка заголовка Location: %s", originalURL)
+	h.logger.Info("Установка заголовка Location", zap.String("url", originalURL))
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -147,7 +151,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if err := r.Body.Close(); err != nil {
-			log.Printf("Ошибка при закрытии тела запроса: %v", err)
+			h.logger.Error("Ошибка при закрытии тела запроса", zap.Error(err))
 		}
 	}()
 
@@ -156,14 +160,14 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID, err := h.urlService.CreateShortURL(req.URL)
+	shortID, err := h.service.CreateShortURL(req.URL)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	shortURL := h.cfg.BaseURL + "/" + shortID
-	log.Printf("Создана короткая ссылка: %s", shortURL)
+	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
 
 	response := ShortenResponse{
 		Result: shortURL,
@@ -172,7 +176,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Ошибка при записи ответа: %v", err)
+		h.logger.Error("Ошибка при записи ответа", zap.Error(err))
 		return
 	}
 }

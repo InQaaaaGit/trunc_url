@@ -2,12 +2,6 @@ package storage
 
 import "sync"
 
-// URLStorage определяет интерфейс для хранения URL
-type URLStorage interface {
-	Save(shortURL, originalURL string) error
-	Get(shortURL string) (string, error)
-}
-
 // MemoryStorage реализует URLStorage с использованием памяти
 type MemoryStorage struct {
 	urls  map[string]string

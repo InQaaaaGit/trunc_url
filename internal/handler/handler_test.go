@@ -10,12 +10,15 @@ import (
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 type mockURLService struct {
 	createShortURLFunc func(url string) (string, error)
 	getOriginalURLFunc func(shortID string) (string, error)
+	storageMock        storage.URLStorage
 }
 
 func (m *mockURLService) CreateShortURL(url string) (string, error) {
@@ -24,6 +27,10 @@ func (m *mockURLService) CreateShortURL(url string) (string, error) {
 
 func (m *mockURLService) GetOriginalURL(shortID string) (string, error) {
 	return m.getOriginalURLFunc(shortID)
+}
+
+func (m *mockURLService) GetStorage() storage.URLStorage {
+	return m.storageMock
 }
 
 func TestHandleCreateURL(t *testing.T) {
@@ -45,6 +52,7 @@ func TestHandleCreateURL(t *testing.T) {
 				createShortURLFunc: func(url string) (string, error) {
 					return "abc123", nil
 				},
+				storageMock: nil,
 			},
 			expectedStatus: http.StatusCreated,
 			expectedBody:   "http://localhost:8080/abc123",
@@ -85,6 +93,7 @@ func TestHandleCreateURL(t *testing.T) {
 				createShortURLFunc: func(url string) (string, error) {
 					return "", errors.New("service error")
 				},
+				storageMock: nil,
 			},
 			expectedStatus: http.StatusInternalServerError,
 			expectedBody:   "Internal server error\n",
@@ -128,6 +137,7 @@ func TestHandleRedirect(t *testing.T) {
 				getOriginalURLFunc: func(shortID string) (string, error) {
 					return "https://example.com", nil
 				},
+				storageMock: nil,
 			},
 			expectedStatus: http.StatusTemporaryRedirect,
 			expectedURL:    "https://example.com",
@@ -146,6 +156,7 @@ func TestHandleRedirect(t *testing.T) {
 				getOriginalURLFunc: func(shortID string) (string, error) {
 					return "", errors.New("URL not found")
 				},
+				storageMock: nil,
 			},
 			expectedStatus: http.StatusNotFound,
 			expectedURL:    "",
@@ -160,7 +171,6 @@ func TestHandleRedirect(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, "/"+tt.shortID, nil)
 			w := httptest.NewRecorder()
 
-			// Создаем контекст с параметром shortID
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("shortID", tt.shortID)
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -177,3 +187,79 @@ func TestHandleRedirect(t *testing.T) {
 		})
 	}
 }
+
+type mockDatabaseChecker struct {
+	checkConnectionFunc func() error
+}
+
+func (m *mockDatabaseChecker) Save(shortURL, originalURL string) error { return nil }
+func (m *mockDatabaseChecker) Get(shortURL string) (string, error)     { return "", nil }
+func (m *mockDatabaseChecker) CheckConnection() error {
+	return m.checkConnectionFunc()
+}
+
+func TestHandlePing(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockChecker    storage.DatabaseChecker
+		expectedStatus int
+		setupService   func() service.URLService
+	}{
+		{
+			name: "DB Connection OK",
+			mockChecker: &mockDatabaseChecker{
+				checkConnectionFunc: func() error {
+					return nil
+				},
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "DB Connection Error",
+			mockChecker: &mockDatabaseChecker{
+				checkConnectionFunc: func() error {
+					return errors.New("db error")
+				},
+			},
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "Storage does not implement DatabaseChecker",
+			mockChecker:    nil,
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{}
+
+			mockService := &mockURLService{}
+			if tt.mockChecker != nil {
+				if checkerWithStorage, ok := tt.mockChecker.(storage.URLStorage); ok {
+					mockService.storageMock = checkerWithStorage
+				} else {
+					mockService.storageMock = &mockDatabaseChecker{}
+				}
+			} else {
+				mockService.storageMock = &storage.MemoryStorage{}
+			}
+
+			h := NewHandler(mockService, cfg)
+			logger, _ := zap.NewDevelopment()
+			h.logger = logger
+
+			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+			w := httptest.NewRecorder()
+
+			h.HandlePing(w, req)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+		})
+	}
+}
+
+var _ storage.URLStorage = (*mockDatabaseChecker)(nil)
+var _ storage.DatabaseChecker = (*mockDatabaseChecker)(nil)

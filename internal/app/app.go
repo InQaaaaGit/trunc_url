@@ -43,6 +43,9 @@ func (a *App) Configure() error {
 	a.router.Get("/", handler.HandleRedirect)
 	a.router.Get("/{shortID}", handler.HandleRedirect)
 
+	// Добавляем хендлер для проверки доступности БД
+	a.router.Get("/ping", handler.HandlePing)
+
 	return nil
 }
 
