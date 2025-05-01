@@ -2,25 +2,40 @@ package main
 
 import (
 	"log"
-	"net/http"
 
+	"github.com/InQaaaaGit/trunc_url.git/internal/app"
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
-	"github.com/InQaaaaGit/trunc_url.git/internal/handler"
-	"github.com/InQaaaaGit/trunc_url.git/internal/service"
-	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 func main() {
-	cfg := config.NewConfig()
-	urlService := service.NewURLService()
-	handler := handler.NewHandler(urlService, cfg.BaseURL)
+	// Инициализация логгера
+	logger, err := zap.NewProduction()
+	if err != nil {
+		log.Fatalf("Ошибка инициализации логгера: %v", err)
+	}
+	defer func() {
+		if err := logger.Sync(); err != nil {
+			log.Printf("Ошибка синхронизации логгера: %v", err)
+		}
+	}()
 
-	r := chi.NewRouter()
-	r.Post("/", handler.HandleCreateURL)
-	r.Get("/{shortID}", handler.HandleRedirect)
+	// Инициализация конфигурации
+	cfg, err := config.NewConfig()
+	if err != nil {
+		logger.Fatal("Ошибка инициализации конфигурации", zap.Error(err))
+	}
 
-	log.Printf("Сервер запускается на %s\n", cfg.ServerAddress)
-	if err := http.ListenAndServe(cfg.ServerAddress, r); err != nil {
-		log.Fatal(err)
+	// Создание и настройка приложения
+	application := app.New(cfg)
+	if err := application.Configure(); err != nil {
+		logger.Fatal("Ошибка конфигурации приложения", zap.Error(err))
+	}
+
+	// Запуск сервера
+	server := application.GetServer()
+	logger.Info("Сервер запускается", zap.String("address", cfg.ServerAddress))
+	if err := server.ListenAndServe(); err != nil {
+		logger.Fatal("Server failed to start", zap.Error(err))
 	}
 }

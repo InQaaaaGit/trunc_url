@@ -1,26 +1,38 @@
 package config
 
-import "flag"
+import (
+	"flag"
+
+	"github.com/caarlos0/env/v6"
+)
 
 // Config хранит конфигурацию приложения.
 type Config struct {
-	ServerAddress string // Адрес для запуска HTTP-сервера (-a)
-	BaseURL       string // Базовый адрес для сокращенных URL (-b)
+	ServerAddress   string `env:"SERVER_ADDRESS"` // Адрес для запуска HTTP-сервера
+	BaseURL         string `env:"BASE_URL"`       // Базовый адрес для сокращенных URL
+	FileStoragePath string `env:"FILE_STORAGE_PATH"`
 }
 
-// NewConfig инициализирует конфигурацию, парсит флаги командной строки.
-func NewConfig() *Config {
-	cfg := &Config{}
+// NewConfig инициализирует конфигурацию, читая флаги и переменные окружения.
+func NewConfig() (*Config, error) {
+	cfg := &Config{
+		ServerAddress:   ":8080",
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "urls.json",
+	}
 
-	// Определение флагов командной строки
-	// Первый аргумент - имя флага
-	// Второй - значение по умолчанию
-	// Третий - описание флага
-	flag.StringVar(&cfg.ServerAddress, "a", ":8080", "Адрес запуска HTTP-сервера (формат: хост:порт)")
-	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "Базовый адрес результирующего сокращённого URL")
+	// Определяем флаги
+	flag.StringVar(&cfg.ServerAddress, "a", cfg.ServerAddress, "адрес запуска HTTP-сервера")
+	flag.StringVar(&cfg.BaseURL, "b", cfg.BaseURL, "базовый URL для сокращенных ссылок")
+	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "путь к файлу для хранения URL")
 
-	// Парсинг флагов
+	// Парсим флаги
 	flag.Parse()
 
-	return cfg
+	// Парсим переменные окружения (имеет наивысший приоритет)
+	if err := env.Parse(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
 }

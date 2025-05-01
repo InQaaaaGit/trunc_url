@@ -1,52 +1,65 @@
 package service
 
 import (
-	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
-	"log"
+	"errors"
+	"net/url"
+
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 )
 
+// URLService определяет интерфейс сервиса для работы с URL
 type URLService interface {
-	CreateShortURL(url string) (string, error)
-	GetOriginalURL(shortID string) (string, bool)
+	CreateShortURL(originalURL string) (string, error)
+	GetOriginalURL(shortURL string) (string, error)
 }
 
+// URLServiceImpl реализует URLService
 type URLServiceImpl struct {
-	urls map[string]string
+	storage storage.URLStorage
+	config  *config.Config
 }
 
-func NewURLService() URLService {
+// NewURLService создает новый экземпляр URLService
+func NewURLService(cfg *config.Config) (*URLServiceImpl, error) {
+	// Создаем файловое хранилище
+	fileStorage, err := storage.NewFileStorage(cfg.FileStoragePath)
+	if err != nil {
+		return nil, err
+	}
+
 	return &URLServiceImpl{
-		urls: make(map[string]string),
-	}
+		storage: fileStorage,
+		config:  cfg,
+	}, nil
 }
 
-func (s *URLServiceImpl) GenerateShortID() (string, error) {
-	b := make([]byte, 8)
-	_, err := rand.Read(b)
-	if err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.EncodeToString(b)[:8], nil
-}
-
+// CreateShortURL создает короткий URL из оригинального
 func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
-	log.Printf("Создание короткой ссылки для: %s", originalURL)
-	shortID, err := s.GenerateShortID()
+	if originalURL == "" {
+		return "", errors.New("empty URL")
+	}
+
+	// Проверяем валидность URL
+	_, err := url.ParseRequestURI(originalURL)
+	if err != nil {
+		return "", errors.New("invalid URL")
+	}
+
+	hash := sha256.Sum256([]byte(originalURL))
+	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
+
+	err = s.storage.Save(shortURL, originalURL)
 	if err != nil {
 		return "", err
 	}
 
-	s.urls[shortID] = originalURL
-	log.Printf("Создано соответствие: %s -> %s", shortID, originalURL)
-	log.Printf("Текущее состояние urls: %v", s.urls)
-	return shortID, nil
+	return shortURL, nil
 }
 
-func (s *URLServiceImpl) GetOriginalURL(shortID string) (string, bool) {
-	log.Printf("Поиск URL для shortID: %s", shortID)
-	log.Printf("Текущее состояние urls: %v", s.urls)
-	originalURL, exists := s.urls[shortID]
-	log.Printf("Результат поиска - URL: %s, существует: %v", originalURL, exists)
-	return originalURL, exists
+// GetOriginalURL получает оригинальный URL по короткому
+func (s *URLServiceImpl) GetOriginalURL(shortURL string) (string, error) {
+	return s.storage.Get(shortURL)
 }
