@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"github.com/go-chi/chi/v5"
@@ -16,9 +17,10 @@ import (
 )
 
 type mockURLService struct {
-	createShortURLFunc func(url string) (string, error)
-	getOriginalURLFunc func(shortID string) (string, error)
-	storageMock        storage.URLStorage
+	createShortURLFunc       func(url string) (string, error)
+	getOriginalURLFunc       func(shortID string) (string, error)
+	storageMock              storage.URLStorage
+	createShortURLsBatchFunc func(batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 }
 
 func (m *mockURLService) CreateShortURL(url string) (string, error) {
@@ -31,6 +33,13 @@ func (m *mockURLService) GetOriginalURL(shortID string) (string, error) {
 
 func (m *mockURLService) GetStorage() storage.URLStorage {
 	return m.storageMock
+}
+
+func (m *mockURLService) CreateShortURLsBatch(batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
+	if m.createShortURLsBatchFunc != nil {
+		return m.createShortURLsBatchFunc(batch)
+	}
+	return []models.BatchResponseEntry{}, nil
 }
 
 func TestHandleCreateURL(t *testing.T) {
@@ -190,10 +199,17 @@ func TestHandleRedirect(t *testing.T) {
 
 type mockDatabaseChecker struct {
 	checkConnectionFunc func() error
+	saveBatchFunc       func(batch []storage.BatchEntry) error
 }
 
 func (m *mockDatabaseChecker) Save(shortURL, originalURL string) error { return nil }
 func (m *mockDatabaseChecker) Get(shortURL string) (string, error)     { return "", nil }
+func (m *mockDatabaseChecker) SaveBatch(batch []storage.BatchEntry) error {
+	if m.saveBatchFunc != nil {
+		return m.saveBatchFunc(batch)
+	}
+	return nil
+}
 func (m *mockDatabaseChecker) CheckConnection() error {
 	return m.checkConnectionFunc()
 }
@@ -261,5 +277,6 @@ func TestHandlePing(t *testing.T) {
 	}
 }
 
+var _ service.URLService = (*mockURLService)(nil)
 var _ storage.URLStorage = (*mockDatabaseChecker)(nil)
 var _ storage.DatabaseChecker = (*mockDatabaseChecker)(nil)

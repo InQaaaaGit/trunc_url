@@ -32,3 +32,14 @@ func (s *MemoryStorage) Get(shortURL string) (string, error) {
 	}
 	return "", ErrURLNotFound
 }
+
+// SaveBatch сохраняет пакет URL в хранилище в памяти
+func (s *MemoryStorage) SaveBatch(batch []BatchEntry) error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	for _, entry := range batch {
+		s.urls[entry.ShortURL] = entry.OriginalURL
+	}
+	return nil // В памяти ошибки при записи не ожидается
+}

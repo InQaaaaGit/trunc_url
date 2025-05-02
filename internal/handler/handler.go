@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -178,5 +179,83 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		h.logger.Error("Ошибка при записи ответа", zap.Error(err))
 		return
+	}
+}
+
+// HandleShortenBatch обрабатывает запросы на пакетное сокращение URL
+func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Проверка Content-Type (должен быть application/json)
+	// Учитываем возможное сжатие gzip, которое обрабатывается middleware
+	contentType := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, contentTypeJSON) {
+		// Если Content-Type не application/json, но тело было успешно разжато GzipMiddleware,
+		// возможно, исходный Content-Type был application/json
+		// GzipMiddleware должен был сохранить исходный Content-Type в какой-то заголовок или контекст?
+		// Проверим стандартный Accept-Encoding - не то.
+		// Проще всего положиться на то, что если пришел не json, то Decode вернет ошибку.
+		// Просто залогируем предупреждение, если Content-Type не json
+		if !strings.Contains(contentType, "application/json") {
+			h.logger.Warn("Request Content-Type is not application/json", zap.String("content-type", contentType))
+		}
+	}
+
+	var reqBatch []models.BatchRequestEntry // Используем модель из пакета models
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Unable to read request body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	if err := json.Unmarshal(bodyBytes, &reqBatch); err != nil {
+		h.logger.Error("Error decoding batch request JSON", zap.Error(err), zap.ByteString("body", bodyBytes))
+		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
+		return
+	}
+
+	// Проверка на пустой батч
+	if len(reqBatch) == 0 {
+		h.logger.Info("Received empty batch request")
+		http.Error(w, "Empty batch is not allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Вызываем метод сервиса для пакетной обработки
+	respBatch, err := h.service.CreateShortURLsBatch(reqBatch) // Передаем []models.BatchRequestEntry
+	if err != nil {
+		h.logger.Error("Error processing batch in service", zap.Error(err))
+		// Определяем, какую ошибку вернуть клиенту
+		// TODO: Возможно, стоит возвращать 400 Bad Request, если ошибка связана с невалидными данными в батче?
+		// Пока возвращаем 500
+		http.Error(w, "Internal server error during batch processing", http.StatusInternalServerError)
+		return
+	}
+
+	// Если сервис вернул пустой слайс (например, все URL были невалидны)
+	if len(respBatch) == 0 {
+		// Спорный момент: возвращать пустой массив с кодом 201 или ошибку 400?
+		// Вернем 400, т.к. по факту ничего не было создано.
+		http.Error(w, "All URLs in the batch were invalid or empty", http.StatusBadRequest)
+		return
+	}
+
+	// Кодируем ответ
+	respBody, err := json.Marshal(respBatch)
+	if err != nil {
+		h.logger.Error("Error encoding batch response JSON", zap.Error(err))
+		http.Error(w, "Internal server error during response encoding", http.StatusInternalServerError)
+		return
+	}
+
+	// Отправляем ответ
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.WriteHeader(http.StatusCreated) // Успешное создание
+	if _, err := w.Write(respBody); err != nil {
+		h.logger.Error("Error writing batch response", zap.Error(err))
 	}
 }

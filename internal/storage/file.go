@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"sync"
 )
@@ -96,4 +97,29 @@ func (fs *FileStorage) Get(shortURL string) (string, error) {
 		return url, nil
 	}
 	return "", ErrURLNotFound
+}
+
+// SaveBatch сохраняет пакет URL в файловое хранилище
+func (fs *FileStorage) SaveBatch(batch []BatchEntry) error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
+	// Сначала загружаем текущие данные, чтобы не потерять их
+	// (на случай, если были изменения с момента последнего loadFromFile)
+	// В реальном приложении это может быть неэффективно для больших файлов
+	if err := fs.loadFromFile(); err != nil {
+		// Если не удалось прочитать, возможно, файл пуст или поврежден.
+		// Попробуем продолжить, перезаписав его новыми данными.
+		// Но лучше залогировать это.
+		log.Printf("Предупреждение: не удалось прочитать файл %s перед пакетной записью: %v", fs.filePath, err)
+		fs.urls = make(map[string]string) // Начинаем с чистого листа
+	}
+
+	// Добавляем новые записи в карту
+	for _, entry := range batch {
+		fs.urls[entry.ShortURL] = entry.OriginalURL
+	}
+
+	// Перезаписываем файл с обновленными данными
+	return fs.saveToFile()
 }
