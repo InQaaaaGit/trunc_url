@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/jackc/pgerrcode" // Импорт для кодов ошибок Postgres
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"   // Используем pq для проверки ошибки
 	_ "github.com/lib/pq" // Импорт драйвера PostgreSQL
 )
 
@@ -56,20 +55,18 @@ func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
 
 // Save сохраняет URL в хранилище
 func (ps *PostgresStorage) Save(shortURL, originalURL string) error {
-	// Простой INSERT, чтобы поймать конфликт уникальности original_url
 	_, err := ps.db.Exec("INSERT INTO urls (short_url, original_url) VALUES ($1, $2)", shortURL, originalURL)
 	if err != nil {
-		// Проверяем, является ли ошибка ошибкой нарушения уникальности
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
-			// Если это конфликт уникальности, возвращаем нашу специальную ошибку
-			// Конкретный short_url для этого original_url будет получен на уровне сервиса
+		// Проверяем, является ли ошибка ошибкой нарушения уникальности от lib/pq
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" { // 23505 = unique_violation
+			// Если это конфликт уникальности (либо short_url, либо original_url),
+			// возвращаем нашу специальную ошибку
 			return ErrOriginalURLConflict
 		}
-		// Для всех других ошибок возвращаем их как есть
+		// Для всех других ошибок возвращаем их обернутыми
 		return fmt.Errorf("ошибка сохранения URL: %w", err)
 	}
-	// Если ошибки нет, все прошло успешно
 	return nil
 }
 
