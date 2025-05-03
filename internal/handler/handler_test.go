@@ -198,8 +198,9 @@ func TestHandleRedirect(t *testing.T) {
 }
 
 type mockDatabaseChecker struct {
-	checkConnectionFunc func() error
-	saveBatchFunc       func(batch []storage.BatchEntry) error
+	checkConnectionFunc       func() error
+	saveBatchFunc             func(batch []storage.BatchEntry) error
+	getShortURLByOriginalFunc func(originalURL string) (string, error)
 }
 
 func (m *mockDatabaseChecker) Save(shortURL, originalURL string) error { return nil }
@@ -212,6 +213,13 @@ func (m *mockDatabaseChecker) SaveBatch(batch []storage.BatchEntry) error {
 }
 func (m *mockDatabaseChecker) CheckConnection() error {
 	return m.checkConnectionFunc()
+}
+
+func (m *mockDatabaseChecker) GetShortURLByOriginal(originalURL string) (string, error) {
+	if m.getShortURLByOriginalFunc != nil {
+		return m.getShortURLByOriginalFunc(originalURL)
+	}
+	return "", storage.ErrURLNotFound
 }
 
 func TestHandlePing(t *testing.T) {
