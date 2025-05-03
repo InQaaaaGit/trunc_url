@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/lib/pq"   // Используем pq для проверки ошибки
-	_ "github.com/lib/pq" // Импорт драйвера PostgreSQL
+	"github.com/lib/pq" // Используем pq для проверки ошибки
+	// _ "github.com/lib/pq" // Удаляем дублирующий анонимный импорт
 )
 
 // PostgresStorage реализует URLStorage с использованием PostgreSQL
