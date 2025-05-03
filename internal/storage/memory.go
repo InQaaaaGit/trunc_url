@@ -43,3 +43,16 @@ func (s *MemoryStorage) SaveBatch(batch []BatchEntry) error {
 	}
 	return nil // В памяти ошибки при записи не ожидается
 }
+
+// GetShortURLByOriginal ищет короткий URL по оригинальному в памяти
+func (s *MemoryStorage) GetShortURLByOriginal(originalURL string) (string, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for short, orig := range s.urls {
+		if orig == originalURL {
+			return short, nil
+		}
+	}
+	return "", ErrURLNotFound
+}

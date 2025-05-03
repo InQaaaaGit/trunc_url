@@ -92,18 +92,27 @@ func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
 
 	err = s.storage.Save(shortURL, originalURL)
 	if err != nil {
-		// Проверяем, является ли ошибка ошибкой конфликта в PostgreSQL
-		// pq: duplicate key value violates unique constraint "urls_pkey"
-		// Это не является ошибкой для логики сервиса, возвращаем существующий shortURL
-		// TODO: Уточнить обработку ошибок для разных хранилищ, если потребуется
-		// if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" { // 23505 = unique_violation
-		// 	log.Printf("URL %s уже существует для %s", shortURL, originalURL)
-		//     return shortURL, nil // Возвращаем существующий ID
-		// }
-		log.Printf("Ошибка сохранения URL: %v", err) // Логируем другие ошибки сохранения
-		return "", err                               // Возвращаем ошибку для других случаев
+		// Проверяем, является ли ошибка конфликтом оригинального URL
+		if errors.Is(err, storage.ErrOriginalURLConflict) {
+			// Если URL уже существует, получаем существующий shortURL
+			log.Printf("Конфликт: Original URL '%s' уже существует. Получаем существующий short URL.", originalURL)
+			existingShortURL, getErr := s.storage.GetShortURLByOriginal(originalURL)
+			if getErr != nil {
+				// Эта ситуация не должна произойти, если Save вернул конфликт,
+				// но обрабатываем на всякий случай
+				log.Printf("Критическая ошибка: не удалось получить short URL для существующего original URL '%s': %v", originalURL, getErr)
+				return "", fmt.Errorf("ошибка получения существующего short URL: %w", getErr)
+			}
+			// Возвращаем существующий shortURL и ошибку конфликта для обработки в хендлере
+			return existingShortURL, storage.ErrOriginalURLConflict
+		}
+
+		// Для других ошибок сохранения просто логируем и возвращаем
+		log.Printf("Ошибка сохранения URL: %v", err)
+		return "", err
 	}
 
+	// Если ошибки нет, возвращаем новый shortURL
 	return shortURL, nil
 }
 

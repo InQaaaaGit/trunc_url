@@ -123,3 +123,20 @@ func (fs *FileStorage) SaveBatch(batch []BatchEntry) error {
 	// Перезаписываем файл с обновленными данными
 	return fs.saveToFile()
 }
+
+// GetShortURLByOriginal ищет короткий URL по оригинальному в файле
+func (fs *FileStorage) GetShortURLByOriginal(originalURL string) (string, error) {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+
+	// Перезагрузка данных перед поиском может быть неэффективной,
+	// но гарантирует актуальность, если файл мог быть изменен извне.
+	// В текущей реализации это излишне, т.к. все изменения идут через этот экземпляр.
+	// Просто ищем в текущем состоянии fs.urls
+	for short, orig := range fs.urls {
+		if orig == originalURL {
+			return short, nil
+		}
+	}
+	return "", ErrURLNotFound
+}

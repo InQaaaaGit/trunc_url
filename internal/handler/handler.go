@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
@@ -75,14 +77,25 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shortID, err := h.service.CreateShortURL(originalURL)
+	shortURL := h.cfg.BaseURL + "/" + shortID
+
 	if err != nil {
+		if errors.Is(err, storage.ErrOriginalURLConflict) {
+			h.logger.Info("URL уже существует (конфликт)", zap.String("original_url", originalURL), zap.String("short_url", shortURL))
+			w.Header().Set("Content-Type", contentTypePlain)
+			w.WriteHeader(http.StatusConflict)
+			if _, writeErr := w.Write([]byte(shortURL)); writeErr != nil {
+				h.logger.Error("Ошибка при записи ответа (конфликт)", zap.Error(writeErr))
+			}
+			return
+		}
+
+		h.logger.Error("Ошибка сервиса при создании URL", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	shortURL := h.cfg.BaseURL + "/" + shortID
 	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
-
 	w.Header().Set("Content-Type", contentTypePlain)
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write([]byte(shortURL)); err != nil {
@@ -162,22 +175,32 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shortID, err := h.service.CreateShortURL(req.URL)
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	shortURL := h.cfg.BaseURL + "/" + shortID
-	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
-
 	response := ShortenResponse{
 		Result: shortURL,
 	}
 
+	if err != nil {
+		if errors.Is(err, storage.ErrOriginalURLConflict) {
+			h.logger.Info("URL уже существует (конфликт) в /api/shorten", zap.String("original_url", req.URL), zap.String("short_url", shortURL))
+			w.Header().Set("Content-Type", contentTypeJSON)
+			w.WriteHeader(http.StatusConflict)
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				h.logger.Error("Ошибка при записи JSON ответа (конфликт)", zap.Error(err))
+			}
+			return
+		}
+
+		h.logger.Error("Ошибка сервиса при создании URL в /api/shorten", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error("Ошибка при записи ответа", zap.Error(err))
+		h.logger.Error("Ошибка при записи JSON ответа", zap.Error(err))
 		return
 	}
 }

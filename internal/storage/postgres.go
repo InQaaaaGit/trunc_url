@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/jackc/pgerrcode" // Импорт для кодов ошибок Postgres
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/lib/pq" // Импорт драйвера PostgreSQL
 )
 
@@ -36,7 +38,7 @@ func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
 	// Используем конкатенацию строк для читаемости SQL
 	createTableSQL := `CREATE TABLE IF NOT EXISTS urls (` +
 		`short_url VARCHAR(255) PRIMARY KEY,` +
-		`original_url TEXT NOT NULL` +
+		`original_url TEXT NOT NULL UNIQUE` +
 		`)`
 	_, err = db.Exec(createTableSQL)
 	if err != nil {
@@ -54,12 +56,20 @@ func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
 
 // Save сохраняет URL в хранилище
 func (ps *PostgresStorage) Save(shortURL, originalURL string) error {
-	// Используем ON CONFLICT для атомарности и избежания гонок
-	// Нет необходимости в мьютексе на уровне приложения для этой операции
-	_, err := ps.db.Exec("INSERT INTO urls (short_url, original_url) VALUES ($1, $2) ON CONFLICT (short_url) DO NOTHING", shortURL, originalURL)
+	// Простой INSERT, чтобы поймать конфликт уникальности original_url
+	_, err := ps.db.Exec("INSERT INTO urls (short_url, original_url) VALUES ($1, $2)", shortURL, originalURL)
 	if err != nil {
+		// Проверяем, является ли ошибка ошибкой нарушения уникальности
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+			// Если это конфликт уникальности, возвращаем нашу специальную ошибку
+			// Конкретный short_url для этого original_url будет получен на уровне сервиса
+			return ErrOriginalURLConflict
+		}
+		// Для всех других ошибок возвращаем их как есть
 		return fmt.Errorf("ошибка сохранения URL: %w", err)
 	}
+	// Если ошибки нет, все прошло успешно
 	return nil
 }
 
@@ -114,6 +124,19 @@ func (ps *PostgresStorage) SaveBatch(batch []BatchEntry) error {
 	}
 
 	return nil
+}
+
+// GetShortURLByOriginal получает короткий URL по оригинальному из PostgreSQL
+func (ps *PostgresStorage) GetShortURLByOriginal(originalURL string) (string, error) {
+	var shortURL string
+	err := ps.db.QueryRow("SELECT short_url FROM urls WHERE original_url = $1", originalURL).Scan(&shortURL)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrURLNotFound
+		}
+		return "", fmt.Errorf("ошибка получения short_url по original_url: %w", err)
+	}
+	return shortURL, nil
 }
 
 // Close закрывает соединение с базой данных

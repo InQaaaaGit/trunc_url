@@ -14,6 +14,10 @@ type URLStorage interface {
 	// Get получает оригинальный URL по короткому
 	Get(shortURL string) (string, error)
 
+	// GetShortURLByOriginal получает короткий URL по оригинальному
+	// Возвращает ErrURLNotFound, если оригинальный URL не найден.
+	GetShortURLByOriginal(originalURL string) (string, error)
+
 	// SaveBatch сохраняет пакет URL
 	SaveBatch(batch []BatchEntry) error
 }
