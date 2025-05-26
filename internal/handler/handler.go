@@ -23,7 +23,7 @@ const (
 	urlNotFoundMessage = "URL not found"
 )
 
-// URLService определяет интерфейс для работы с URL
+// URLService defines the interface for working with URLs
 type URLService interface {
 	CreateShortURL(url string) (string, error)
 	GetOriginalURL(shortID string) (string, error)
@@ -64,12 +64,12 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if err := r.Body.Close(); err != nil {
-			h.logger.Error("Ошибка при закрытии тела запроса", zap.Error(err))
+			h.logger.Error("Error closing request body", zap.Error(err))
 		}
 	}()
 
 	originalURL := strings.TrimSpace(string(body))
-	h.logger.Info("Получен URL в POST запросе", zap.String("url", originalURL))
+	h.logger.Info("Received URL in POST request", zap.String("url", originalURL))
 
 	if originalURL == "" {
 		http.Error(w, emptyURLMessage, http.StatusBadRequest)
@@ -81,59 +81,59 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if errors.Is(err, storage.ErrOriginalURLConflict) {
-			h.logger.Info("URL уже существует (конфликт)", zap.String("original_url", originalURL), zap.String("short_url", shortURL))
+			h.logger.Info("URL already exists (conflict)", zap.String("original_url", originalURL), zap.String("short_url", shortURL))
 			w.Header().Set("Content-Type", contentTypePlain)
 			w.WriteHeader(http.StatusConflict)
 			if _, writeErr := w.Write([]byte(shortURL)); writeErr != nil {
-				h.logger.Error("Ошибка при записи ответа (конфликт)", zap.Error(writeErr))
+				h.logger.Error("Error writing response (conflict)", zap.Error(writeErr))
 			}
 			return
 		}
 
-		h.logger.Error("Ошибка сервиса при создании URL", zap.Error(err))
+		h.logger.Error("Error in service when creating URL", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
+	h.logger.Info("Short URL created", zap.String("url", shortURL))
 	w.Header().Set("Content-Type", contentTypePlain)
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write([]byte(shortURL)); err != nil {
-		h.logger.Error("Ошибка при записи ответа", zap.Error(err))
+		h.logger.Error("Error writing response", zap.Error(err))
 		return
 	}
 }
 
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
-	h.logger.Info("Получен запрос", zap.String("метод", r.Method), zap.String("путь", r.URL.Path))
+	h.logger.Info("Request received", zap.String("method", r.Method), zap.String("path", r.URL.Path))
 
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Получаем shortID из пути URL или из параметра
+	// Get shortID from URL path or parameter
 	shortID := chi.URLParam(r, "shortID")
 	if shortID == "" {
 		shortID = strings.TrimPrefix(r.URL.Path, "/")
 	}
-	h.logger.Info("Извлечен shortID", zap.String("shortID", shortID))
+	h.logger.Info("Extracted shortID", zap.String("shortID", shortID))
 
 	if shortID == "" {
-		h.logger.Warn("Пустой shortID")
+		h.logger.Warn("Empty shortID")
 		http.Error(w, invalidURLMessage, http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("Попытка получить оригинальный URL", zap.String("shortID", shortID))
+	h.logger.Info("Attempting to get original URL", zap.String("shortID", shortID))
 	originalURL, err := h.service.GetOriginalURL(shortID)
 	if err != nil {
-		h.logger.Warn("URL не найден", zap.String("shortID", shortID), zap.Error(err))
+		h.logger.Warn("URL not found", zap.String("shortID", shortID), zap.Error(err))
 		http.Error(w, urlNotFoundMessage, http.StatusNotFound)
 		return
 	}
 
-	h.logger.Info("Установка заголовка Location", zap.String("url", originalURL))
+	h.logger.Info("Setting Location header", zap.String("url", originalURL))
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -165,7 +165,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if err := r.Body.Close(); err != nil {
-			h.logger.Error("Ошибка при закрытии тела запроса", zap.Error(err))
+			h.logger.Error("Error closing request body", zap.Error(err))
 		}
 	}()
 
@@ -182,52 +182,52 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		if errors.Is(err, storage.ErrOriginalURLConflict) {
-			h.logger.Info("URL уже существует (конфликт) в /api/shorten", zap.String("original_url", req.URL), zap.String("short_url", shortURL))
+			h.logger.Info("URL already exists (conflict) in /api/shorten", zap.String("original_url", req.URL), zap.String("short_url", shortURL))
 			w.Header().Set("Content-Type", contentTypeJSON)
 			w.WriteHeader(http.StatusConflict)
 			if err := json.NewEncoder(w).Encode(response); err != nil {
-				h.logger.Error("Ошибка при записи JSON ответа (конфликт)", zap.Error(err))
+				h.logger.Error("Error writing JSON response (conflict)", zap.Error(err))
 			}
 			return
 		}
 
-		h.logger.Error("Ошибка сервиса при создании URL в /api/shorten", zap.Error(err))
+		h.logger.Error("Error in service when creating URL in /api/shorten", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info("Создана короткая ссылка", zap.String("url", shortURL))
+	h.logger.Info("Short URL created", zap.String("url", shortURL))
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error("Ошибка при записи JSON ответа", zap.Error(err))
+		h.logger.Error("Error writing JSON response", zap.Error(err))
 		return
 	}
 }
 
-// HandleShortenBatch обрабатывает запросы на пакетное сокращение URL
+// HandleShortenBatch processes requests for batch shortening URLs
 func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Проверка Content-Type (должен быть application/json)
-	// Учитываем возможное сжатие gzip, которое обрабатывается middleware
+	// Check Content-Type (must be application/json)
+	// Consider gzip compression, which is handled by middleware
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		// Если Content-Type не application/json, но тело было успешно разжато GzipMiddleware,
-		// возможно, исходный Content-Type был application/json
-		// GzipMiddleware должен был сохранить исходный Content-Type в какой-то заголовок или контекст?
-		// Проверим стандартный Accept-Encoding - не то.
-		// Проще всего положиться на то, что если пришел не json, то Decode вернет ошибку.
-		// Просто залогируем предупреждение, если Content-Type не json
+		// If Content-Type is not application/json but body was successfully decompressed by GzipMiddleware,
+		// possibly original Content-Type was application/json
+		// GzipMiddleware should have preserved original Content-Type in some header or context?
+		// Check standard Accept-Encoding - not it.
+		// The easiest way is to rely on the fact that if it's not json, Decode will return an error.
+		// Simply log warning if Content-Type is not json
 		if !strings.Contains(contentType, "application/json") {
 			h.logger.Warn("Request Content-Type is not application/json", zap.String("content-type", contentType))
 		}
 	}
 
-	var reqBatch []models.BatchRequestEntry // Используем модель из пакета models
+	var reqBatch []models.BatchRequestEntry // Use model from package models
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Unable to read request body", http.StatusBadRequest)
@@ -235,7 +235,7 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		if err := r.Body.Close(); err != nil {
-			h.logger.Error("Ошибка при закрытии тела запроса", zap.Error(err))
+			h.logger.Error("Error closing request body", zap.Error(err))
 		}
 	}()
 
@@ -245,33 +245,33 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Проверка на пустой батч
+	// Check for empty batch
 	if len(reqBatch) == 0 {
 		h.logger.Info("Received empty batch request")
 		http.Error(w, "Empty batch is not allowed", http.StatusBadRequest)
 		return
 	}
 
-	// Вызываем метод сервиса для пакетной обработки
-	respBatch, err := h.service.CreateShortURLsBatch(reqBatch) // Передаем []models.BatchRequestEntry
+	// Call service method for batch processing
+	respBatch, err := h.service.CreateShortURLsBatch(reqBatch) // Pass []models.BatchRequestEntry
 	if err != nil {
 		h.logger.Error("Error processing batch in service", zap.Error(err))
-		// Определяем, какую ошибку вернуть клиенту
-		// TODO: Возможно, стоит возвращать 400 Bad Request, если ошибка связана с невалидными данными в батче?
-		// Пока возвращаем 500
+		// Determine which error to return to client
+		// TODO: Maybe return 400 Bad Request if error is related to invalid data in batch?
+		// For now, return 500
 		http.Error(w, "Internal server error during batch processing", http.StatusInternalServerError)
 		return
 	}
 
-	// Если сервис вернул пустой слайс (например, все URL были невалидны)
+	// If service returned empty slice (e.g., all URLs were invalid)
 	if len(respBatch) == 0 {
-		// Спорный момент: возвращать пустой массив с кодом 201 или ошибку 400?
-		// Вернем 400, т.к. по факту ничего не было создано.
+		// Controversial moment: return empty array with code 201 or error 400?
+		// Return 400, as fact nothing was created.
 		http.Error(w, "All URLs in the batch were invalid or empty", http.StatusBadRequest)
 		return
 	}
 
-	// Кодируем ответ
+	// Encode response
 	respBody, err := json.Marshal(respBatch)
 	if err != nil {
 		h.logger.Error("Error encoding batch response JSON", zap.Error(err))
@@ -279,9 +279,9 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Отправляем ответ
+	// Send response
 	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusCreated) // Успешное создание
+	w.WriteHeader(http.StatusCreated) // Successful creation
 	if _, err := w.Write(respBody); err != nil {
 		h.logger.Error("Error writing batch response", zap.Error(err))
 	}

@@ -7,28 +7,28 @@ import (
 	"sync"
 )
 
-// URLRecord представляет запись в файле хранилища
+// URLRecord represents a record in the file storage
 type URLRecord struct {
 	UUID        string `json:"uuid"`
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
 }
 
-// FileStorage реализует URLStorage с использованием файла
+// FileStorage implements URLStorage using a file
 type FileStorage struct {
 	filePath string
 	urls     map[string]string
 	mutex    sync.RWMutex
 }
 
-// NewFileStorage создает новый экземпляр FileStorage
+// NewFileStorage creates a new FileStorage instance
 func NewFileStorage(filePath string) (*FileStorage, error) {
 	fs := &FileStorage{
 		filePath: filePath,
 		urls:     make(map[string]string),
 	}
 
-	// Загружаем существующие данные из файла
+	// Load existing data from file
 	if err := fs.loadFromFile(); err != nil {
 		return nil, err
 	}
@@ -36,7 +36,7 @@ func NewFileStorage(filePath string) (*FileStorage, error) {
 	return fs, nil
 }
 
-// loadFromFile загружает данные из файла
+// loadFromFile loads data from the file
 func (fs *FileStorage) loadFromFile() error {
 	file, err := os.OpenFile(fs.filePath, os.O_RDONLY|os.O_CREATE, 0644)
 	if err != nil {
@@ -56,7 +56,7 @@ func (fs *FileStorage) loadFromFile() error {
 	return nil
 }
 
-// saveToFile сохраняет данные в файл
+// saveToFile saves data to the file
 func (fs *FileStorage) saveToFile() error {
 	file, err := os.OpenFile(fs.filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
@@ -67,7 +67,7 @@ func (fs *FileStorage) saveToFile() error {
 	encoder := json.NewEncoder(file)
 	for shortURL, originalURL := range fs.urls {
 		record := URLRecord{
-			UUID:        shortURL, // Используем shortURL как UUID для простоты
+			UUID:        shortURL, // Use shortURL as UUID for simplicity
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
 		}
@@ -79,7 +79,7 @@ func (fs *FileStorage) saveToFile() error {
 	return nil
 }
 
-// Save сохраняет URL в хранилище
+// Save saves a URL to the storage
 func (fs *FileStorage) Save(shortURL, originalURL string) error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
@@ -88,7 +88,7 @@ func (fs *FileStorage) Save(shortURL, originalURL string) error {
 	return fs.saveToFile()
 }
 
-// Get получает оригинальный URL по короткому
+// Get retrieves the original URL from a short one
 func (fs *FileStorage) Get(shortURL string) (string, error) {
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
@@ -99,40 +99,40 @@ func (fs *FileStorage) Get(shortURL string) (string, error) {
 	return "", ErrURLNotFound
 }
 
-// SaveBatch сохраняет пакет URL в файловое хранилище
+// SaveBatch saves a batch of URLs to the file storage
 func (fs *FileStorage) SaveBatch(batch []BatchEntry) error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 
-	// Сначала загружаем текущие данные, чтобы не потерять их
-	// (на случай, если были изменения с момента последнего loadFromFile)
-	// В реальном приложении это может быть неэффективно для больших файлов
+	// First, load existing data to avoid losing them
+	// (in case there were changes since the last loadFromFile)
+	// In a real application, this might be inefficient for large files
 	if err := fs.loadFromFile(); err != nil {
-		// Если не удалось прочитать, возможно, файл пуст или поврежден.
-		// Попробуем продолжить, перезаписав его новыми данными.
-		// Но лучше залогировать это.
-		log.Printf("Предупреждение: не удалось прочитать файл %s перед пакетной записью: %v", fs.filePath, err)
-		fs.urls = make(map[string]string) // Начинаем с чистого листа
+		// If reading fails, it might be because the file is empty or corrupted.
+		// We'll try to continue, overwriting the file with new data.
+		// But it's better to log this.
+		log.Printf("Warning: failed to read file %s before batch write: %v", fs.filePath, err)
+		fs.urls = make(map[string]string) // Start with a clean slate
 	}
 
-	// Добавляем новые записи в карту
+	// Add new records to the map
 	for _, entry := range batch {
 		fs.urls[entry.ShortURL] = entry.OriginalURL
 	}
 
-	// Перезаписываем файл с обновленными данными
+	// Overwrite the file with updated data
 	return fs.saveToFile()
 }
 
-// GetShortURLByOriginal ищет короткий URL по оригинальному в файле
+// GetShortURLByOriginal finds a short URL from an original one in the file
 func (fs *FileStorage) GetShortURLByOriginal(originalURL string) (string, error) {
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
-	// Перезагрузка данных перед поиском может быть неэффективной,
-	// но гарантирует актуальность, если файл мог быть изменен извне.
-	// В текущей реализации это излишне, т.к. все изменения идут через этот экземпляр.
-	// Просто ищем в текущем состоянии fs.urls
+	// Reloading data before search might be inefficient,
+	// but guarantees freshness if the file could have been changed from outside.
+	// In the current implementation, this is unnecessary, as all changes go through this instance.
+	// Simply search in the current state of fs.urls
 	for short, orig := range fs.urls {
 		if orig == originalURL {
 			return short, nil

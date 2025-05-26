@@ -13,7 +13,7 @@ import (
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 )
 
-// URLService определяет интерфейс сервиса для работы с URL
+// URLService defines the interface for the URL service
 type URLService interface {
 	CreateShortURL(originalURL string) (string, error)
 	GetOriginalURL(shortURL string) (string, error)
@@ -21,27 +21,27 @@ type URLService interface {
 	CreateShortURLsBatch(batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 }
 
-// URLServiceImpl реализует URLService
+// URLServiceImpl implements the URLService
 type URLServiceImpl struct {
 	storage storage.URLStorage
 	config  *config.Config
 }
 
-// NewURLService создает новый экземпляр URLService, выбирая хранилище
-// в зависимости от конфигурации с приоритетом: PostgreSQL -> Файл -> Память.
+// NewURLService creates a new instance of URLService, choosing storage
+// depending on the configuration with priority: PostgreSQL -> File -> Memory.
 func NewURLService(cfg *config.Config) (*URLServiceImpl, error) {
 	var store storage.URLStorage
 	var err error
 
-	// 1. Пытаемся использовать PostgreSQL, если задан DSN
+	// 1. Try to use PostgreSQL, if DSN is specified
 	if cfg.DatabaseDSN != "" {
-		log.Println("Используется PostgreSQL хранилище:", cfg.DatabaseDSN)
+		log.Println("Using PostgreSQL storage:", cfg.DatabaseDSN)
 		store, err = storage.NewPostgresStorage(cfg.DatabaseDSN)
 		if err != nil {
-			// Логируем ошибку, но не выходим, т.к. можем перейти к файловому хранилищу
-			log.Printf("Ошибка инициализации PostgreSQL хранилища: %v. Переход к файловому хранилищу.", err)
+			// Log the error but don't exit, as we can switch to file storage
+			log.Printf("PostgreSQL storage initialization error: %v. Switching to file storage.", err)
 		} else {
-			// Успешно создали PostgresStorage, используем его
+			// Successfully created PostgresStorage, use it
 			return &URLServiceImpl{
 				storage: store,
 				config:  cfg,
@@ -49,15 +49,15 @@ func NewURLService(cfg *config.Config) (*URLServiceImpl, error) {
 		}
 	}
 
-	// 2. Пытаемся использовать Файловое хранилище, если задан путь и Postgres не удался или не был задан
+	// 2. Try to use File Storage, if path is specified and Postgres failed or not specified
 	if cfg.FileStoragePath != "" {
-		log.Println("Используется файловое хранилище:", cfg.FileStoragePath)
+		log.Println("Using file storage:", cfg.FileStoragePath)
 		store, err = storage.NewFileStorage(cfg.FileStoragePath)
 		if err != nil {
-			// Логируем ошибку, но не выходим, т.к. можем перейти к хранилищу в памяти
-			log.Printf("Ошибка инициализации файлового хранилища: %v. Переход к хранилищу в памяти.", err)
+			// Log the error but don't exit, as we can switch to in-memory storage
+			log.Printf("File storage initialization error: %v. Switching to in-memory storage.", err)
 		} else {
-			// Успешно создали FileStorage, используем его
+			// Successfully created FileStorage, use it
 			return &URLServiceImpl{
 				storage: store,
 				config:  cfg,
@@ -65,23 +65,23 @@ func NewURLService(cfg *config.Config) (*URLServiceImpl, error) {
 		}
 	}
 
-	// 3. Используем хранилище в памяти как запасной вариант
-	log.Println("Используется хранилище в памяти.")
-	store = storage.NewMemoryStorage() // NewMemoryStorage не возвращает ошибку
+	// 3. Use in-memory storage as a fallback option
+	log.Println("Using in-memory storage.")
+	store = storage.NewMemoryStorage() // NewMemoryStorage never returns an error
 
 	return &URLServiceImpl{
 		storage: store,
 		config:  cfg,
-	}, nil // Ошибки здесь быть не может, т.к. MemoryStorage всегда создается успешно
+	}, nil // There should be no errors here, as MemoryStorage always succeeds
 }
 
-// CreateShortURL создает короткий URL из оригинального
+// CreateShortURL creates a short URL from the original
 func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
 	if originalURL == "" {
 		return "", errors.New("empty URL")
 	}
 
-	// Проверяем валидность URL
+	// Check URL validity
 	_, err := url.ParseRequestURI(originalURL)
 	if err != nil {
 		return "", errors.New("invalid URL")
@@ -92,48 +92,48 @@ func (s *URLServiceImpl) CreateShortURL(originalURL string) (string, error) {
 
 	err = s.storage.Save(shortURL, originalURL)
 	if err != nil {
-		// Проверяем, является ли ошибка конфликтом оригинального URL
+		// Check if the error is due to a conflict with the original URL
 		if errors.Is(err, storage.ErrOriginalURLConflict) {
-			// Если URL уже существует, получаем существующий shortURL
-			log.Printf("Конфликт: Original URL '%s' уже существует. Получаем существующий short URL.", originalURL)
+			// If URL already exists, get existing shortURL
+			log.Printf("Conflict: Original URL '%s' already exists. Getting existing short URL.", originalURL)
 			existingShortURL, getErr := s.storage.GetShortURLByOriginal(originalURL)
 			if getErr != nil {
-				// Эта ситуация не должна произойти, если Save вернул конфликт,
-				// но обрабатываем на всякий случай
-				log.Printf("Критическая ошибка: не удалось получить short URL для существующего original URL '%s': %v", originalURL, getErr)
-				return "", fmt.Errorf("ошибка получения существующего short URL: %w", getErr)
+				// This situation should not occur if Save returned a conflict,
+				// but we handle it on the safe side
+				log.Printf("Critical error: failed to get short URL for existing original URL '%s': %v", originalURL, getErr)
+				return "", fmt.Errorf("error getting existing short URL: %w", getErr)
 			}
-			// Возвращаем существующий shortURL и ошибку конфликта для обработки в хендлере
+			// Return existing shortURL and conflict error for handling in the handler
 			return existingShortURL, storage.ErrOriginalURLConflict
 		}
 
-		// Для других ошибок сохранения просто логируем и возвращаем
-		log.Printf("Ошибка сохранения URL: %v", err)
+		// For other saving errors, just log and return
+		log.Printf("Error saving URL: %v", err)
 		return "", err
 	}
 
-	// Если ошибки нет, возвращаем новый shortURL
+	// If there's no error, return new shortURL
 	return shortURL, nil
 }
 
-// GetOriginalURL получает оригинальный URL по короткому
+// GetOriginalURL gets the original URL from the short
 func (s *URLServiceImpl) GetOriginalURL(shortURL string) (string, error) {
 	originalURL, err := s.storage.Get(shortURL)
 	if err != nil {
 		if errors.Is(err, storage.ErrURLNotFound) {
-			log.Printf("URL не найден для shortID: %s", shortURL)
+			log.Printf("URL not found for shortID: %s", shortURL)
 		} else {
-			log.Printf("Ошибка получения URL для shortID %s: %v", shortURL, err)
+			log.Printf("Error getting URL for shortID %s: %v", shortURL, err)
 		}
-		return "", err // Возвращаем ошибку (включая ErrURLNotFound)
+		return "", err // Return error (including ErrURLNotFound)
 	}
 	return originalURL, nil
 }
 
-// CreateShortURLsBatch создает короткие URL для пакета и сохраняет их
+// CreateShortURLsBatch creates short URLs for a batch and saves them
 func (s *URLServiceImpl) CreateShortURLsBatch(reqBatch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
 	if len(reqBatch) == 0 {
-		return []models.BatchResponseEntry{}, nil // Возвращаем пустой слайс, если на входе пусто
+		return []models.BatchResponseEntry{}, nil // Return empty slice if input is empty
 	}
 
 	storageBatch := make([]storage.BatchEntry, 0, len(reqBatch))
@@ -142,53 +142,53 @@ func (s *URLServiceImpl) CreateShortURLsBatch(reqBatch []models.BatchRequestEntr
 	for _, reqEntry := range reqBatch {
 		originalURL := reqEntry.OriginalURL
 		if originalURL == "" {
-			// Пропускаем пустые URL или возвращаем ошибку?
-			// По ТЗ вроде не сказано, но логично пропустить или вернуть ошибку на весь батч.
-			// Пока пропустим и залогируем.
-			log.Printf("Пропущен пустой URL в батче для correlation_id: %s", reqEntry.CorrelationID)
+			// Skip empty URLs or return error?
+			// According to the task, it's not specified, but logically we should skip or return an error for the whole batch.
+			// For now, we'll skip and log.
+			log.Printf("Skipped empty URL in batch for correlation_id: %s", reqEntry.CorrelationID)
 			continue
 		}
-		// TODO: Добавить валидацию URL, как в CreateShortURL?
+		// TODO: Add URL validation, like in CreateShortURL?
 		// _, err := url.ParseRequestURI(originalURL)
 		// if err != nil { ... }
 
-		// Генерируем shortURL (та же логика, что и в CreateShortURL)
+		// Generate shortURL (same logic as in CreateShortURL)
 		hash := sha256.Sum256([]byte(originalURL))
 		shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
-		fullShortURL := s.config.BaseURL + "/" + shortURL // Формируем полный URL для ответа
+		fullShortURL := s.config.BaseURL + "/" + shortURL // Form full URL for response
 
-		// Добавляем в батч для сохранения в хранилище
+		// Add to batch for saving to storage
 		storageBatch = append(storageBatch, storage.BatchEntry{
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
 		})
 
-		// Добавляем в батч для ответа
+		// Add to batch for response
 		respBatch = append(respBatch, models.BatchResponseEntry{
 			CorrelationID: reqEntry.CorrelationID,
 			ShortURL:      fullShortURL,
 		})
 	}
 
-	// Если после фильтрации пустых URL батч для хранилища опустел
+	// If after filtering empty URLs batch for storage became empty
 	if len(storageBatch) == 0 {
-		log.Println("Пакет для сохранения пуст после обработки входных данных.")
-		// Возвращаем пустой respBatch, так как валидных URL не было
-		return []models.BatchResponseEntry{}, errors.New("все URL в пакете были невалидны или пусты")
+		log.Println("Batch for saving is empty after processing input data.")
+		// Return empty respBatch, since no valid URLs were found
+		return []models.BatchResponseEntry{}, errors.New("all URLs in the batch were invalid or empty")
 	}
 
-	// Сохраняем весь батч в хранилище
+	// Save entire batch to storage
 	err := s.storage.SaveBatch(storageBatch)
 	if err != nil {
-		log.Printf("Ошибка сохранения пакета URL: %v", err)
-		return nil, fmt.Errorf("ошибка сохранения пакета: %w", err) // Возвращаем ошибку
+		log.Printf("Error saving URL batch: %v", err)
+		return nil, fmt.Errorf("error saving batch: %w", err) // Return error
 	}
 
-	// Возвращаем результат
+	// Return result
 	return respBatch, nil
 }
 
-// GetStorage возвращает хранилище URL
+// GetStorage returns the URL storage
 func (s *URLServiceImpl) GetStorage() storage.URLStorage {
 	return s.storage
 }
