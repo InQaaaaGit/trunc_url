@@ -101,20 +101,12 @@ func (ps *PostgresStorage) SaveBatch(ctx context.Context, batch []BatchEntry) er
 	// Гарантируем откат транзакции в случае ошибки
 	defer tx.Rollback() //nolint:errcheck // Вызов Rollback на завершенной транзакции безопасен
 
-	// Подготавливаем запрос для вставки
-	// $1, $2 - плейсхолдеры для PostgreSQL
-	stmt, err := tx.PrepareContext(ctx, "INSERT INTO urls (short_url, original_url) VALUES ($1, $2) ON CONFLICT (short_url) DO NOTHING")
-	if err != nil {
-		return fmt.Errorf("query preparation error: %w", err)
-	}
-	// Закрываем statement после завершения функции SaveBatch
-	// (независимо от того, завершится транзакция коммитом или роллбэком)
-	defer stmt.Close()
-
 	// Выполняем вставку для каждой записи в пакете
 	for _, entry := range batch {
-		if _, err := stmt.ExecContext(ctx, entry.ShortURL, entry.OriginalURL); err != nil {
-			// Ошибка при выполнении запроса внутри транзакции, откатываем (через defer) и возвращаем ошибку
+		_, err := tx.ExecContext(ctx,
+			"INSERT INTO urls (short_url, original_url) VALUES ($1, $2) ON CONFLICT (short_url) DO NOTHING",
+			entry.ShortURL, entry.OriginalURL)
+		if err != nil {
 			return fmt.Errorf("insert query execution error for shortURL %s: %w", entry.ShortURL, err)
 		}
 	}
