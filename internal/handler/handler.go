@@ -32,6 +32,8 @@ type URLService interface {
 	GetOriginalURL(ctx context.Context, shortID string) (string, error)
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	CheckConnection(ctx context.Context) error
+	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
 }
 
 type Handler struct {
@@ -266,6 +268,48 @@ func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// HandleGetUserURLs обрабатывает GET запрос для получения всех URL пользователя
+func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Получаем userID из контекста
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Получаем URL пользователя
+	urls, err := h.service.GetUserURLs(r.Context(), userID)
+	if err != nil {
+		h.logger.Error("Error getting user URLs", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Если у пользователя нет URL, возвращаем 204
+	if len(urls) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Формируем полные URL
+	for i := range urls {
+		urls[i].ShortURL = h.cfg.BaseURL + "/" + urls[i].ShortURL
+	}
+
+	// Отправляем ответ
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(urls); err != nil {
+		h.logger.Error("Error encoding response", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 }
 
 // WithLogging добавляет логирование запросов

@@ -10,6 +10,7 @@ import (
 	"net/url"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"go.uber.org/zap"
@@ -22,6 +23,9 @@ type URLService interface {
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	CheckConnection(ctx context.Context) error
+	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	Save(ctx context.Context, shortURL, originalURL string) error
+	SaveBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 }
 
 // URLServiceImpl implements the URLService
@@ -94,6 +98,12 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string)
 		return "", fmt.Errorf("invalid URL format")
 	}
 
+	// Получаем userID из контекста
+	userID, ok := ctx.Value(middleware.UserIDKey).(string)
+	if !ok {
+		return "", fmt.Errorf("user_id not found in context")
+	}
+
 	// Check if URL already exists
 	existingShortURL, err := s.storage.GetShortURLByOriginal(ctx, originalURL)
 	if err == nil {
@@ -107,7 +117,7 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string)
 	hash := sha256.Sum256([]byte(originalURL))
 	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
 
-	err = s.storage.Save(ctx, shortURL, originalURL)
+	err = s.storage.SaveUserURL(ctx, userID, shortURL, originalURL)
 	if err != nil {
 		// Check if the error is due to a conflict with the original URL
 		if errors.Is(err, storage.ErrOriginalURLConflict) {
@@ -157,6 +167,12 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 		return []models.BatchResponseEntry{}, nil // Return empty slice if input is empty
 	}
 
+	// Получаем userID из контекста
+	userID, ok := ctx.Value(middleware.UserIDKey).(string)
+	if !ok {
+		return nil, fmt.Errorf("user_id not found in context")
+	}
+
 	storageBatch := make([]storage.BatchEntry, 0, len(reqBatch))
 	respBatch := make([]models.BatchResponseEntry, 0, len(reqBatch))
 
@@ -193,6 +209,7 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 		storageBatch = append(storageBatch, storage.BatchEntry{
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
+			UserID:      userID,
 		})
 
 		// Add to batch for response
@@ -233,4 +250,32 @@ func (s *URLServiceImpl) CheckConnection(ctx context.Context) error {
 	}
 	// Если хранилище не поддерживает проверку соединения, считаем что оно доступно
 	return nil
+}
+
+// GetUserURLs получает все URL пользователя
+func (s *URLServiceImpl) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	return s.storage.GetUserURLs(ctx, userID)
+}
+
+// Save сохраняет URL в хранилище
+func (s *URLServiceImpl) Save(ctx context.Context, shortURL, originalURL string) error {
+	// Получаем userID из контекста
+	_, ok := ctx.Value(middleware.UserIDKey).(string)
+	if !ok {
+		return fmt.Errorf("user_id not found in context")
+	}
+
+	return s.storage.Save(ctx, shortURL, originalURL)
+}
+
+// SaveBatch сохраняет пакет URL
+func (s *URLServiceImpl) SaveBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
+	// Получаем userID из контекста
+	_, ok := ctx.Value(middleware.UserIDKey).(string)
+	if !ok {
+		return nil, fmt.Errorf("user_id not found in context")
+	}
+
+	// ... existing code ...
+	return nil, nil
 }

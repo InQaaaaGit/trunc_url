@@ -8,10 +8,19 @@ import (
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"go.uber.org/zap"
 )
+
+// testUserID используется в тестах как ID пользователя
+const testUserID = "test_user_id"
+
+// withTestUserID создает контекст с тестовым ID пользователя
+func withTestUserID(ctx context.Context) context.Context {
+	return context.WithValue(ctx, middleware.UserIDKey, testUserID)
+}
 
 func setupTestService(t *testing.T) (*URLServiceImpl, func()) {
 	cfg := &config.Config{
@@ -46,7 +55,7 @@ func TestConcurrentAccess(t *testing.T) {
 	errChan := make(chan error, iterations*2)
 	logChan := make(chan string, iterations*2)
 	done := make(chan struct{})
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 
 	// Горутина для логирования
 	go func() {
@@ -125,7 +134,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 	errChan := make(chan error, iterations*2)
 	logChan := make(chan string, iterations*2)
 	done := make(chan struct{})
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 
 	// Горутина для логирования
 	go func() {
@@ -217,7 +226,7 @@ func TestCreateShortURL(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 
 	tests := []struct {
 		name        string
@@ -270,7 +279,7 @@ func TestGetOriginalURL(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 
 	// Сначала создаем URL
 	originalURL := "https://example.com"
@@ -335,7 +344,7 @@ func TestCreateShortURLsBatch(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 
 	tests := []struct {
 		name      string
@@ -397,7 +406,7 @@ func TestURLConflict(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 
 	// Создаем первый URL
 	originalURL := "https://example.com"
@@ -433,7 +442,7 @@ func TestGetStorage(t *testing.T) {
 }
 
 func TestMemoryStorage(t *testing.T) {
-	ctx := context.Background()
+	ctx := withTestUserID(context.Background())
 	logger, _ := zap.NewDevelopment()
 	store := storage.NewMemoryStorage(logger)
 
@@ -463,20 +472,29 @@ func TestMemoryStorage(t *testing.T) {
 
 	// Test SaveBatch
 	batch := []storage.BatchEntry{
-		{ShortURL: "test2", OriginalURL: "https://example2.com"},
-		{ShortURL: "test3", OriginalURL: "https://example3.com"},
+		{ShortURL: "test2", OriginalURL: "https://example2.com", UserID: testUserID},
+		{ShortURL: "test3", OriginalURL: "https://example3.com", UserID: testUserID},
 	}
 	err = store.SaveBatch(ctx, batch)
 	if err != nil {
 		t.Errorf("SaveBatch() error = %v", err)
 	}
 
-	// Verify batch save
+	// Test Get after batch save
 	got, err = store.Get(ctx, "test2")
 	if err != nil {
 		t.Errorf("Get() after batch save error = %v", err)
 	}
 	if got != "https://example2.com" {
 		t.Errorf("Get() after batch save = %v, want %v", got, "https://example2.com")
+	}
+
+	// Test GetUserURLs
+	urls, err := store.GetUserURLs(ctx, testUserID)
+	if err != nil {
+		t.Errorf("GetUserURLs() error = %v", err)
+	}
+	if len(urls) != 3 {
+		t.Errorf("GetUserURLs() returned %d URLs, want 3", len(urls))
 	}
 }

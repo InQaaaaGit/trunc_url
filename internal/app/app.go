@@ -7,6 +7,7 @@ import (
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/handler"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -62,12 +63,14 @@ func (a *App) setupRoutes() {
 	// Middleware
 	a.router.Use(a.handler.WithLogging)
 	a.router.Use(a.handler.WithGzip)
+	a.router.Use(middleware.WithAuth)
 
 	// Routes
 	a.router.Post("/", a.handler.HandleCreateURL)
 	a.router.Get("/{id}", a.handler.HandleRedirect)
 	a.router.Post("/api/shorten", a.handler.HandleShortenURL)
 	a.router.Post("/api/shorten/batch", a.handler.HandleShortenBatch)
+	a.router.Get("/api/user/urls", a.handler.HandleGetUserURLs)
 	a.router.Get("/ping", a.handler.HandlePing)
 }
 
