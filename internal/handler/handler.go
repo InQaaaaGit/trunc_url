@@ -261,7 +261,7 @@ func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	if err := h.service.CheckConnection(ctx); err != nil {
 		h.logger.Error("Ошибка подключения к хранилищу", zap.Error(err))
-		http.Error(w, "Storage connection error", http.StatusInternalServerError)
+		http.Error(w, "Storage is no longer available", http.StatusGone)
 		return
 	}
 

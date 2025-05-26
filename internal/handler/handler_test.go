@@ -306,6 +306,7 @@ func TestHandlePing(t *testing.T) {
 		method         string
 		mockService    *mockURLService
 		expectedStatus int
+		expectedBody   string
 	}{
 		{
 			name:   "Valid ping",
@@ -316,12 +317,14 @@ func TestHandlePing(t *testing.T) {
 				},
 			},
 			expectedStatus: http.StatusOK,
+			expectedBody:   "",
 		},
 		{
 			name:           "Invalid method",
 			method:         http.MethodPost,
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   "Method not allowed\n",
 		},
 		{
 			name:   "Connection error",
@@ -331,7 +334,8 @@ func TestHandlePing(t *testing.T) {
 					return errors.New("connection error")
 				},
 			},
-			expectedStatus: http.StatusInternalServerError,
+			expectedStatus: http.StatusGone,
+			expectedBody:   "Storage is no longer available\n",
 		},
 	}
 
@@ -347,6 +351,9 @@ func TestHandlePing(t *testing.T) {
 			h.HandlePing(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedBody != "" {
+				assert.Equal(t, tt.expectedBody, w.Body.String())
+			}
 		})
 	}
 }
