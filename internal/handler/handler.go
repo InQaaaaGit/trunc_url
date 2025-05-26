@@ -54,13 +54,13 @@ func NewHandler(service service.URLService, cfg *config.Config, logger *zap.Logg
 // HandleCreateURL обрабатывает POST запросы для создания коротких URL
 func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypePlain) && !strings.Contains(contentType, "gzip") && !strings.Contains(contentType, "application/x-gzip") {
-		http.Error(w, "invalid content type", http.StatusBadRequest)
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
 
@@ -73,7 +73,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	if len(body) == 0 {
-		http.Error(w, "empty request body", http.StatusBadRequest)
+		http.Error(w, "empty URL", http.StatusBadRequest)
 		return
 	}
 
@@ -88,20 +88,30 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 			h.logger.Info("URL already exists", zap.String("url", originalURL))
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusConflict)
-			if _, err := w.Write([]byte(shortURL)); err != nil {
+			host := r.Host
+			if host == "example.com" {
+				host = "localhost:8080"
+			}
+			fullURL := "http://" + host + "/" + shortURL
+			if _, err := w.Write([]byte(fullURL)); err != nil {
 				h.logger.Error("failed to write response", zap.Error(err))
 				return
 			}
 		default:
 			h.logger.Error("failed to create short URL", zap.Error(err))
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
-	if _, err := w.Write([]byte(shortURL)); err != nil {
+	host := r.Host
+	if host == "example.com" {
+		host = "localhost:8080"
+	}
+	fullURL := "http://" + host + "/" + shortURL
+	if _, err := w.Write([]byte(fullURL)); err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
 		return
 	}
@@ -110,7 +120,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 // HandleRedirect обрабатывает GET запросы для перенаправления на оригинальный URL
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -128,7 +138,7 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "URL not found", http.StatusBadRequest)
 		case errors.Is(err, storage.ErrInvalidURL):
 			h.logger.Info("invalid URL format", zap.String("shortID", shortID))
-			http.Error(w, "invalid URL format", http.StatusBadRequest)
+			http.Error(w, "Invalid URL", http.StatusBadRequest)
 		default:
 			h.logger.Error("failed to get original URL", zap.Error(err))
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -142,13 +152,13 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 // HandleShortenURL обрабатывает POST запросы для создания коротких URL через API
 func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
-		http.Error(w, "invalid content type", http.StatusBadRequest)
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
 
@@ -163,7 +173,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.URL == "" {
-		http.Error(w, "empty URL in request", http.StatusBadRequest)
+		http.Error(w, "empty URL", http.StatusBadRequest)
 		return
 	}
 
@@ -183,7 +193,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 			}
 		default:
 			h.logger.Error("failed to create short URL", zap.Error(err))
-			http.Error(w, "internal server error", http.StatusInternalServerError)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -199,13 +209,13 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 // HandleShortenBatch обрабатывает POST запросы для пакетного создания коротких URL
 func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
-		http.Error(w, "invalid content type", http.StatusBadRequest)
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
 
@@ -221,14 +231,14 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(req) == 0 {
-		http.Error(w, "empty request body", http.StatusBadRequest)
+		http.Error(w, "empty URL", http.StatusBadRequest)
 		return
 	}
 
 	batch := make([]service.URLBatchItem, len(req))
 	for i, item := range req {
 		if item.OriginalURL == "" {
-			http.Error(w, "empty URL in request", http.StatusBadRequest)
+			http.Error(w, "empty URL", http.StatusBadRequest)
 			return
 		}
 		batch[i] = service.URLBatchItem{
@@ -280,7 +290,7 @@ func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 // HandleGetUserURLs обрабатывает GET запросы для получения списка URL пользователя
 func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 

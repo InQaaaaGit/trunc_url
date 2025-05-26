@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
@@ -15,14 +17,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// BatchRequest представляет запрос на создание короткого URL в пакетном режиме
+type BatchRequest struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+// BatchResponse представляет результат создания короткого URL в пакетном режиме
+type BatchResponse struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
 // URLService определяет интерфейс для работы с URL
 type URLService interface {
 	// CreateShortURL создает короткий URL для оригинального URL
-	CreateShortURL(ctx context.Context, originalURL string) (string, error)
+	CreateShortURL(ctx context.Context, originalURL string, userID string) (string, error)
 	// GetOriginalURL возвращает оригинальный URL по короткому URL
 	GetOriginalURL(ctx context.Context, shortURL string) (string, error)
 	// CreateShortURLsBatch создает короткие URL для пакета оригинальных URL
-	CreateShortURLsBatch(ctx context.Context, batch []URLBatchItem) ([]URLBatchResult, error)
+	CreateShortURLsBatch(ctx context.Context, batch []BatchRequest, userID string) ([]BatchResponse, error)
 	// GetUserURLs возвращает список URL пользователя
 	GetUserURLs(ctx context.Context) ([]models.UserURL, error)
 	// Ping проверяет соединение с хранилищем
@@ -88,26 +102,30 @@ func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 	}, nil
 }
 
-// CreateShortURL создает короткий URL для оригинального URL
-func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
+// CreateShortURL создает короткий URL для заданного оригинального URL
+func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string, userID string) (string, error) {
+	if originalURL == "" {
+		return "", fmt.Errorf("invalid URL format")
+	}
+
 	// Проверяем, что URL валидный
-	if !isValidURL(originalURL) {
-		return "", storage.ErrInvalidURL
+	parsedURL, err := url.Parse(originalURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return "", fmt.Errorf("invalid URL format")
 	}
 
 	// Генерируем короткий URL
 	shortURL := generateShortURL(originalURL)
 
+	// Проверяем, существует ли уже такой URL
+	existingShortURL, err := s.storage.GetShortURL(ctx, originalURL)
+	if err == nil {
+		// URL уже существует
+		return existingShortURL, storage.ErrOriginalURLConflict
+	}
+
 	// Сохраняем URL
 	if err := s.storage.SaveURL(ctx, shortURL, originalURL); err != nil {
-		if err == storage.ErrURLAlreadyExists {
-			// Если URL уже существует, получаем его короткую версию
-			existingShortURL, err := s.storage.GetShortURL(ctx, originalURL)
-			if err != nil {
-				return "", fmt.Errorf("failed to get existing short URL: %w", err)
-			}
-			return existingShortURL, nil
-		}
 		return "", fmt.Errorf("failed to save URL: %w", err)
 	}
 
@@ -116,7 +134,32 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string)
 
 // GetOriginalURL возвращает оригинальный URL по короткому URL
 func (s *URLServiceImpl) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
-	return s.storage.GetOriginalURL(ctx, shortURL)
+	if shortURL == "" {
+		return "", fmt.Errorf("empty short URL")
+	}
+
+	// Проверяем, что короткий URL валидный
+	parsedURL, err := url.Parse(shortURL)
+	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		return "", fmt.Errorf("invalid URL format")
+	}
+
+	// Извлекаем ID из короткого URL
+	shortID := path.Base(parsedURL.Path)
+	if shortID == "" {
+		return "", fmt.Errorf("invalid URL format")
+	}
+
+	// Получаем оригинальный URL из хранилища
+	originalURL, err := s.storage.GetOriginalURL(ctx, shortID)
+	if err != nil {
+		if errors.Is(err, storage.ErrURLNotFound) {
+			return "", fmt.Errorf("URL not found")
+		}
+		return "", fmt.Errorf("failed to get original URL: %w", err)
+	}
+
+	return originalURL, nil
 }
 
 // GetUserURLs возвращает список URL пользователя
@@ -131,24 +174,31 @@ func (s *URLServiceImpl) GetUserURLs(ctx context.Context) ([]models.UserURL, err
 }
 
 // CreateShortURLsBatch создает короткие URL для пакета оригинальных URL
-func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, batch []URLBatchItem) ([]URLBatchResult, error) {
+func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, batch []BatchRequest, userID string) ([]BatchResponse, error) {
 	if len(batch) == 0 {
-		return nil, nil
+		return nil, fmt.Errorf("empty batch")
 	}
 
-	result := make([]URLBatchResult, len(batch))
-	for i, item := range batch {
-		if !isValidURL(item.OriginalURL) {
-			return nil, storage.ErrInvalidURL
+	// Проверяем все URL в пакете
+	for _, req := range batch {
+		if req.OriginalURL == "" {
+			return nil, fmt.Errorf("invalid URL format")
 		}
+		parsedURL, err := url.Parse(req.OriginalURL)
+		if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+			return nil, fmt.Errorf("invalid URL format")
+		}
+	}
 
-		shortURL, err := s.CreateShortURL(ctx, item.OriginalURL)
+	result := make([]BatchResponse, len(batch))
+	for i, req := range batch {
+		shortURL, err := s.CreateShortURL(ctx, req.OriginalURL, userID)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create short URL for item %s: %w", item.CorrelationID, err)
+			return nil, fmt.Errorf("failed to create short URL for item %s: %w", req.CorrelationID, err)
 		}
 
-		result[i] = URLBatchResult{
-			CorrelationID: item.CorrelationID,
+		result[i] = BatchResponse{
+			CorrelationID: req.CorrelationID,
 			ShortURL:      shortURL,
 		}
 	}
@@ -217,8 +267,14 @@ func isValidURL(rawURL string) bool {
 		return false
 	}
 
-	// Проверяем, что есть хост
-	return u.Host != ""
+	// Проверяем, что есть хост и в нем есть хотя бы одна точка
+	if u.Host == "" {
+		return false
+	}
+	if !strings.Contains(u.Host, ".") {
+		return false
+	}
+	return true
 }
 
 // generateShortURL генерирует короткий URL на основе оригинального URL

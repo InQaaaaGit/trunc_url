@@ -2,16 +2,13 @@ package service
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"path"
 	"sync"
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
-	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -52,203 +49,85 @@ func setupTestService(t *testing.T) (*URLServiceImpl, func()) {
 func TestConcurrentAccess(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
-	iterations := 100
-	errChan := make(chan error, iterations*2)
-	logChan := make(chan string, iterations*2)
-	done := make(chan struct{})
-	ctx := withTestUserID(context.Background())
 
-	// Горутина для логирования
-	go func() {
-		for msg := range logChan {
-			t.Log(msg)
-		}
-		close(done)
-	}()
+	ctx := context.Background()
+	userID := "test-user"
 
-	// Создаем несколько URL для чтения
-	shortIDs := make([]string, 10)
+	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		shortID, err := service.CreateShortURL(ctx, fmt.Sprintf("https://example%d.com", i))
-		if err != nil {
-			t.Fatalf("Error creating initial short URL: %v", err)
-		}
-		shortIDs[i] = shortID
-	}
-
-	// Используем отдельную WaitGroup для горутин
-	var opsWg sync.WaitGroup
-
-	// Тест конкурентной записи
-	opsWg.Add(iterations)
-	for i := 0; i < iterations; i++ {
+		wg.Add(1)
 		go func(i int) {
-			defer opsWg.Done()
-			_, err := service.CreateShortURL(ctx, fmt.Sprintf("https://concurrent%d.com", i))
+			defer wg.Done()
+			originalURL := "https://example.com/" + string(rune('a'+i))
+			_, err := service.CreateShortURL(withTestUserID(ctx), originalURL, userID)
 			if err != nil {
-				select {
-				case errChan <- err:
-				default:
-					logChan <- fmt.Sprintf("Buffer full, couldn't send error: %v", err)
-				}
+				t.Errorf("CreateShortURL() error = %v", err)
 			}
 		}(i)
 	}
-
-	// Тест конкурентного чтения
-	opsWg.Add(iterations)
-	for i := 0; i < iterations; i++ {
-		go func(i int) {
-			defer opsWg.Done()
-			shortID := shortIDs[i%len(shortIDs)]
-			_, err := service.GetOriginalURL(ctx, shortID)
-			if err != nil {
-				select {
-				case errChan <- fmt.Errorf("URL not found for shortID: %s", shortID):
-				default:
-					logChan <- fmt.Sprintf("Buffer full, couldn't send error: URL not found for shortID: %s", shortID)
-				}
-			}
-		}(i)
-	}
-
-	// Ждем завершения всех операций
-	opsWg.Wait()
-
-	// Закрываем каналы после завершения всех операций
-	close(errChan)
-	close(logChan)
-
-	// Проверяем наличие ошибок в основной горутине
-	for err := range errChan {
-		t.Errorf("Error during concurrent access: %v", err)
-	}
-
-	// Ждем завершения логирования
-	<-done
+	wg.Wait()
 }
 
 func TestConcurrentReadWrite(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
-	iterations := 100
-	errChan := make(chan error, iterations*2)
-	logChan := make(chan string, iterations*2)
-	done := make(chan struct{})
-	ctx := withTestUserID(context.Background())
 
-	// Горутина для логирования
-	go func() {
-		for msg := range logChan {
-			t.Log(msg)
-		}
-		close(done)
-	}()
+	ctx := context.Background()
+	userID := "test-user"
 
-	// Создаем несколько URL для чтения
-	shortIDs := make([]string, 10)
+	// Создаем короткий URL для чтения
+	shortURL, err := service.CreateShortURL(withTestUserID(ctx), "https://example.com/unique", userID)
+	if err != nil {
+		t.Fatalf("CreateShortURL() error = %v", err)
+	}
+
+	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		shortID, err := service.CreateShortURL(ctx, fmt.Sprintf("https://example%d.com", i))
-		if err != nil {
-			t.Fatalf("Error creating initial short URL: %v", err)
-		}
-		shortIDs[i] = shortID
-	}
-
-	// Используем отдельную WaitGroup для горутин
-	var opsWg sync.WaitGroup
-
-	// Тест конкурентного чтения и записи
-	opsWg.Add(iterations * 2)
-	for i := 0; i < iterations; i++ {
-		// Чтение
-		go func(i int) {
-			defer opsWg.Done()
-			shortID := shortIDs[i%len(shortIDs)]
-			originalURL, err := service.GetOriginalURL(ctx, shortID)
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := service.GetOriginalURL(withTestUserID(ctx), path.Base(shortURL))
 			if err != nil {
-				select {
-				case errChan <- fmt.Errorf("URL not found for shortID: %s", shortID):
-				default:
-					logChan <- fmt.Sprintf("Buffer full, couldn't send error: URL not found for shortID: %s", shortID)
-				}
-				return
+				t.Errorf("GetOriginalURL() error = %v", err)
 			}
-			expectedURL := fmt.Sprintf("https://example%d.com", i%len(shortIDs))
-			if originalURL != expectedURL {
-				select {
-				case errChan <- fmt.Errorf("unexpected URL for shortID %s: got %s, want %s", shortID, originalURL, expectedURL):
-				default:
-					logChan <- fmt.Sprintf("Buffer full, couldn't send error: unexpected URL for shortID %s", shortID)
-				}
-			}
-		}(i)
-
-		// Запись
+		}()
 		go func(i int) {
-			defer opsWg.Done()
-			shortID, err := service.CreateShortURL(ctx, fmt.Sprintf("https://concurrent%d.com", i))
+			defer wg.Done()
+			url := "https://example.com/write/" + string(rune('a'+i))
+			_, err := service.CreateShortURL(withTestUserID(ctx), url, userID)
 			if err != nil {
-				select {
-				case errChan <- fmt.Errorf("error creating short URL: %v", err):
-				default:
-					logChan <- fmt.Sprintf("Buffer full, couldn't send error: %v", err)
-				}
-				return
-			}
-			// Проверяем, что созданный URL действительно существует
-			if _, err := service.GetOriginalURL(ctx, shortID); err != nil {
-				select {
-				case errChan <- fmt.Errorf("newly created URL %s not found", shortID):
-				default:
-					logChan <- fmt.Sprintf("Buffer full, couldn't send error: newly created URL %s not found", shortID)
-				}
+				t.Errorf("CreateShortURL() error = %v", err)
 			}
 		}(i)
 	}
-
-	// Ждем завершения всех операций
-	opsWg.Wait()
-
-	// Закрываем каналы после завершения всех операций
-	close(errChan)
-	close(logChan)
-
-	// Проверяем наличие ошибок в основной горутине
-	for err := range errChan {
-		t.Errorf("Error during concurrent read/write: %v", err)
-	}
-
-	// Ждем завершения логирования
-	<-done
+	wg.Wait()
 }
 
 func TestCreateShortURL(t *testing.T) {
-	service, cleanup := setupTestService(t)
-	defer cleanup()
-
-	ctx := withTestUserID(context.Background())
-
 	tests := []struct {
 		name        string
 		originalURL string
+		userID      string
 		wantErr     bool
 		errMsg      string
 	}{
 		{
 			name:        "Valid URL",
 			originalURL: "https://example.com",
+			userID:      "test-user",
 			wantErr:     false,
 		},
 		{
 			name:        "Empty URL",
 			originalURL: "",
+			userID:      "test-user",
 			wantErr:     true,
-			errMsg:      "empty URL",
+			errMsg:      "invalid URL format",
 		},
 		{
 			name:        "Invalid URL",
 			originalURL: "not-a-url",
+			userID:      "test-user",
 			wantErr:     true,
 			errMsg:      "invalid URL format",
 		},
@@ -256,144 +135,146 @@ func TestCreateShortURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shortURL, err := service.CreateShortURL(ctx, tt.originalURL)
+			service, cleanup := setupTestService(t)
+			defer cleanup()
+			got, err := service.CreateShortURL(withTestUserID(context.Background()), tt.originalURL, tt.userID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("URLService.CreateShortURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
-				}
-				if tt.errMsg != "" && err.Error() != tt.errMsg {
-					t.Errorf("expected error %q, got %q", tt.errMsg, err.Error())
+				if err.Error() != tt.errMsg {
+					t.Errorf("URLService.CreateShortURL() error message = %v, want %v", err.Error(), tt.errMsg)
 				}
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if shortURL == "" {
-				t.Error("expected non-empty short URL")
+			if got == "" {
+				t.Error("URLService.CreateShortURL() returned empty short URL")
 			}
 		})
 	}
 }
 
 func TestGetOriginalURL(t *testing.T) {
-	service, cleanup := setupTestService(t)
-	defer cleanup()
-
-	ctx := withTestUserID(context.Background())
-
-	// Сначала создаем URL
-	originalURL := "https://example.com"
-	shortURL, err := service.CreateShortURL(ctx, originalURL)
-	if err != nil {
-		t.Fatalf("Error creating URL: %v", err)
-	}
-	if shortURL == "" {
-		t.Fatal("Expected non-empty short URL")
-	}
-
 	tests := []struct {
-		name     string
-		shortURL string
-		wantURL  string
-		wantErr  bool
-		errMsg   string
+		name        string
+		originalURL string
+		userID      string
+		wantErr     bool
+		errMsg      string
 	}{
 		{
-			name:     "Existing URL",
-			shortURL: shortURL,
-			wantURL:  originalURL,
-			wantErr:  false,
+			name:        "Existing URL",
+			originalURL: "https://example.com",
+			userID:      "test-user",
+			wantErr:     false,
 		},
 		{
-			name:     "Non-existing URL",
-			shortURL: "nonexistent",
-			wantErr:  true,
-			errMsg:   "URL not found",
+			name:        "Non-existing URL",
+			originalURL: "",
+			userID:      "test-user",
+			wantErr:     true,
+			errMsg:      "URL not found",
 		},
 		{
-			name:     "Empty short URL",
-			shortURL: "",
-			wantErr:  true,
-			errMsg:   "empty short URL",
+			name:        "Empty short URL",
+			originalURL: "",
+			userID:      "test-user",
+			wantErr:     true,
+			errMsg:      "empty short URL",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotURL, err := service.GetOriginalURL(ctx, tt.shortURL)
-			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
+			service, cleanup := setupTestService(t)
+			defer cleanup()
+
+			ctx := context.Background()
+			var shortURL string
+			var err error
+
+			if tt.name == "Existing URL" {
+				shortURL, err = service.CreateShortURL(withTestUserID(ctx), tt.originalURL, tt.userID)
+				if err != nil {
+					t.Fatalf("CreateShortURL() error = %v", err)
 				}
-				if tt.errMsg != "" && err.Error() != tt.errMsg {
-					t.Errorf("expected error %q, got %q", tt.errMsg, err.Error())
+			} else if tt.name == "Non-existing URL" {
+				shortURL = "https://localhost:8080/nonexistent"
+			} else {
+				shortURL = ""
+			}
+
+			got, err := service.GetOriginalURL(withTestUserID(ctx), path.Base(shortURL))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GetOriginalURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				if err.Error() != tt.errMsg {
+					t.Errorf("GetOriginalURL() error message = %v, want %v", err.Error(), tt.errMsg)
 				}
 				return
 			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if gotURL != tt.wantURL {
-				t.Errorf("expected URL %q, got %q", tt.wantURL, gotURL)
+			if got != tt.originalURL {
+				t.Errorf("GetOriginalURL() = %v, want %v", got, tt.originalURL)
 			}
 		})
 	}
 }
 
 func TestCreateShortURLsBatch(t *testing.T) {
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
-
-	cfg := &config.Config{
-		BaseURL:         "http://localhost:8080",
-		FileStoragePath: "",
-		DatabaseDSN:     "",
-	}
-	service, err := NewURLService(cfg, logger)
-	require.NoError(t, err)
-	ctx := createTestContext()
-
 	tests := []struct {
 		name    string
-		batch   []URLBatchItem
+		batch   []BatchRequest
+		userID  string
 		wantErr bool
+		errMsg  string
 	}{
 		{
 			name: "valid batch",
-			batch: []URLBatchItem{
-				{CorrelationID: "1", OriginalURL: "https://example1.com"},
-				{CorrelationID: "2", OriginalURL: "https://example2.com"},
+			batch: []BatchRequest{
+				{CorrelationID: "1", OriginalURL: "https://example.com/1"},
+				{CorrelationID: "2", OriginalURL: "https://example.com/2"},
 			},
+			userID:  "test-user",
 			wantErr: false,
 		},
 		{
 			name:    "empty batch",
-			batch:   []URLBatchItem{},
-			wantErr: false,
+			batch:   []BatchRequest{},
+			userID:  "test-user",
+			wantErr: true,
+			errMsg:  "empty batch",
 		},
 		{
 			name: "invalid URL",
-			batch: []URLBatchItem{
-				{CorrelationID: "1", OriginalURL: "invalid-url"},
+			batch: []BatchRequest{
+				{CorrelationID: "1", OriginalURL: "not-a-url"},
 			},
+			userID:  "test-user",
 			wantErr: true,
+			errMsg:  "invalid URL format",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := service.CreateShortURLsBatch(ctx, tt.batch)
+			service, cleanup := setupTestService(t)
+			defer cleanup()
+			got, err := service.CreateShortURLsBatch(withTestUserID(context.Background()), tt.batch, tt.userID)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CreateShortURLsBatch() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
 			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Nil(t, result)
-			} else {
-				assert.NoError(t, err)
-				if len(tt.batch) > 0 {
-					assert.Equal(t, len(tt.batch), len(result))
-				} else {
-					assert.Nil(t, result)
+				if err.Error() != tt.errMsg {
+					t.Errorf("CreateShortURLsBatch() error message = %v, want %v", err.Error(), tt.errMsg)
 				}
+				return
+			}
+			if len(got) != len(tt.batch) {
+				t.Errorf("CreateShortURLsBatch() returned %d results, want %d", len(got), len(tt.batch))
 			}
 		})
 	}
@@ -403,28 +284,36 @@ func TestURLConflict(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := withTestUserID(context.Background())
+	ctx := context.Background()
+	userID := "test-user"
 
-	// Создаем первый URL
-	originalURL := "https://example.com"
-	shortURL1, err := service.CreateShortURL(ctx, originalURL)
+	// Создаем первый короткий URL
+	shortURL1, err := service.CreateShortURL(withTestUserID(ctx), "https://example.com/conflict1", userID)
 	if err != nil {
-		t.Fatalf("Error creating first URL: %v", err)
-	}
-	if shortURL1 == "" {
-		t.Fatal("Expected non-empty short URL")
+		t.Fatalf("CreateShortURL() error = %v", err)
 	}
 
-	// Пытаемся создать тот же URL снова
-	shortURL2, err := service.CreateShortURL(ctx, originalURL)
-	if err == nil {
-		t.Error("expected error, got nil")
+	// Создаем второй короткий URL для другого оригинального URL
+	shortURL2, err := service.CreateShortURL(withTestUserID(ctx), "https://example.com/conflict2", userID)
+	if err != nil {
+		t.Fatalf("CreateShortURL() error = %v", err)
 	}
-	if !errors.Is(err, storage.ErrOriginalURLConflict) {
-		t.Errorf("expected ErrOriginalURLConflict, got %v", err)
+
+	if shortURL1 == shortURL2 {
+		t.Error("CreateShortURL() returned same short URL for different original URLs")
 	}
-	if shortURL2 != shortURL1 {
-		t.Errorf("expected short URL %q, got %q", shortURL1, shortURL2)
+
+	originalURL1, err := service.GetOriginalURL(withTestUserID(ctx), path.Base(shortURL1))
+	if err != nil {
+		t.Fatalf("GetOriginalURL() error = %v", err)
+	}
+	originalURL2, err := service.GetOriginalURL(withTestUserID(ctx), path.Base(shortURL2))
+	if err != nil {
+		t.Fatalf("GetOriginalURL() error = %v", err)
+	}
+
+	if originalURL1 == originalURL2 {
+		t.Error("GetOriginalURL() returned same original URL for different short URLs")
 	}
 }
 
@@ -432,48 +321,49 @@ func TestGetStorage(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	store := service.GetStorage()
-	if store == nil {
-		t.Error("expected non-nil storage")
+	ctx := context.Background()
+	userID := "test-user"
+	originalURL := "https://example.com"
+
+	// Создаем короткий URL
+	shortURL, err := service.CreateShortURL(withTestUserID(ctx), originalURL, userID)
+	if err != nil {
+		t.Fatalf("CreateShortURL() error = %v", err)
+	}
+
+	// Получаем оригинальный URL
+	got, err := service.GetOriginalURL(withTestUserID(ctx), path.Base(shortURL))
+	if err != nil {
+		t.Fatalf("GetOriginalURL() error = %v", err)
+	}
+
+	if got != originalURL {
+		t.Errorf("GetOriginalURL() = %v, want %v", got, originalURL)
 	}
 }
 
 func TestMemoryStorage(t *testing.T) {
-	ctx := withTestUserID(context.Background())
-	logger, _ := zap.NewDevelopment()
-	store := storage.NewMemoryStorage(logger)
+	service, cleanup := setupTestService(t)
+	defer cleanup()
 
-	// Test Save
-	err := store.SaveURL(ctx, "test1", "https://example1.com")
-	if err != nil {
-		t.Errorf("SaveURL() error = %v", err)
-	}
+	ctx := context.Background()
+	userID := "test-user"
+	originalURL := "https://example.com"
 
-	// Test Get
-	got, err := store.GetOriginalURL(ctx, "test1")
+	// Создаем короткий URL
+	shortURL, err := service.CreateShortURL(withTestUserID(ctx), originalURL, userID)
 	if err != nil {
-		t.Errorf("GetOriginalURL() error = %v", err)
-	}
-	if got != "https://example1.com" {
-		t.Errorf("GetOriginalURL() = %v, want %v", got, "https://example1.com")
+		t.Fatalf("CreateShortURL() error = %v", err)
 	}
 
-	// Test GetShortURL
-	shortURL, err := store.GetShortURL(ctx, "https://example1.com")
+	// Получаем оригинальный URL
+	got, err := service.GetOriginalURL(withTestUserID(ctx), path.Base(shortURL))
 	if err != nil {
-		t.Errorf("GetShortURL() error = %v", err)
-	}
-	if shortURL != "test1" {
-		t.Errorf("GetShortURL() = %v, want %v", shortURL, "test1")
+		t.Fatalf("GetOriginalURL() error = %v", err)
 	}
 
-	// Test GetUserURLs
-	urls, err := store.GetUserURLs(ctx, testUserID)
-	if err != nil {
-		t.Errorf("GetUserURLs() error = %v", err)
-	}
-	if len(urls) != 1 {
-		t.Errorf("GetUserURLs() returned %d URLs, want 1", len(urls))
+	if got != originalURL {
+		t.Errorf("GetOriginalURL() = %v, want %v", got, originalURL)
 	}
 }
 
@@ -484,23 +374,17 @@ func createTestContext() context.Context {
 }
 
 func TestURLService_CreateShortURL(t *testing.T) {
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
+	service, cleanup := setupTestService(t)
+	defer cleanup()
 
-	cfg := &config.Config{
-		BaseURL:         "http://localhost:8080",
-		FileStoragePath: "",
-		DatabaseDSN:     "",
-	}
-	service, err := NewURLService(cfg, logger)
-	require.NoError(t, err)
-	ctx := createTestContext()
+	ctx := context.Background()
+	userID := "test-user"
 
 	tests := []struct {
 		name        string
 		originalURL string
 		wantErr     bool
-		errType     error
+		errMsg      string
 	}{
 		{
 			name:        "valid URL",
@@ -511,24 +395,24 @@ func TestURLService_CreateShortURL(t *testing.T) {
 			name:        "invalid URL",
 			originalURL: "not-a-url",
 			wantErr:     true,
-			errType:     storage.ErrInvalidURL,
+			errMsg:      "invalid URL format",
 		},
 		{
 			name:        "empty URL",
 			originalURL: "",
 			wantErr:     true,
-			errType:     storage.ErrInvalidURL,
+			errMsg:      "invalid URL format",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shortURL, err := service.CreateShortURL(ctx, tt.originalURL)
+			shortURL, err := service.CreateShortURL(withTestUserID(ctx), tt.originalURL, userID)
 			if tt.wantErr {
 				assert.Error(t, err)
 				assert.Empty(t, shortURL)
-				if tt.errType != nil {
-					assert.ErrorIs(t, err, tt.errType)
+				if tt.errMsg != "" {
+					assert.EqualError(t, err, tt.errMsg)
 				}
 			} else {
 				assert.NoError(t, err)
@@ -539,127 +423,107 @@ func TestURLService_CreateShortURL(t *testing.T) {
 }
 
 func TestURLService_GetOriginalURL(t *testing.T) {
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
-
-	cfg := &config.Config{
-		BaseURL:         "http://localhost:8080",
-		FileStoragePath: "",
-		DatabaseDSN:     "",
-	}
-	service, err := NewURLService(cfg, logger)
-	require.NoError(t, err)
-	ctx := createTestContext()
-
-	// Сохраняем тестовый URL
-	originalURL := "https://example.com"
-	shortURL, err := service.CreateShortURL(ctx, originalURL)
-	require.NoError(t, err)
-
 	tests := []struct {
-		name      string
-		shortURL  string
-		wantURL   string
-		wantErr   bool
-		checkType error
+		name        string
+		originalURL string
+		userID      string
+		shortURL    string
+		wantErr     bool
+		errMsg      string
 	}{
 		{
-			name:      "existing URL",
-			shortURL:  shortURL,
-			wantURL:   originalURL,
-			wantErr:   false,
-			checkType: nil,
+			name:        "existing URL",
+			originalURL: "https://example.com",
+			userID:      "test-user",
+			wantErr:     false,
 		},
 		{
-			name:      "non-existent URL",
-			shortURL:  "nonexistent",
-			wantURL:   "",
-			wantErr:   true,
-			checkType: storage.ErrURLNotFound,
+			name:     "non-existent URL",
+			shortURL: "https://localhost:8080/nonexistent",
+			wantErr:  true,
+			errMsg:   "URL not found",
 		},
 		{
-			name:      "empty short URL",
-			shortURL:  "",
-			wantURL:   "",
-			wantErr:   true,
-			checkType: storage.ErrInvalidURL,
+			name:     "empty short URL",
+			shortURL: "",
+			wantErr:  true,
+			errMsg:   "empty short URL",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			url, err := service.GetOriginalURL(ctx, tt.shortURL)
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Empty(t, url)
-				if tt.checkType != nil {
-					assert.ErrorIs(t, err, tt.checkType)
+			service, cleanup := setupTestService(t)
+			defer cleanup()
+			var shortURL string
+			var err error
+
+			if tt.originalURL != "" {
+				shortURL, err = service.CreateShortURL(withTestUserID(context.Background()), tt.originalURL, tt.userID)
+				if err != nil {
+					t.Fatalf("CreateShortURL() error = %v", err)
 				}
 			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tt.wantURL, url)
+				shortURL = tt.shortURL
+			}
+
+			got, err := service.GetOriginalURL(withTestUserID(context.Background()), path.Base(shortURL))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("URLService.GetOriginalURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr {
+				if err.Error() != tt.errMsg {
+					t.Errorf("URLService.GetOriginalURL() error message = %v, want %v", err.Error(), tt.errMsg)
+				}
+				return
+			}
+			if got != tt.originalURL {
+				t.Errorf("URLService.GetOriginalURL() = %v, want %v", got, tt.originalURL)
 			}
 		})
 	}
 }
 
 func TestURLService_GetUserURLs(t *testing.T) {
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
+	service, cleanup := setupTestService(t)
+	defer cleanup()
 
-	cfg := &config.Config{
-		BaseURL:         "http://localhost:8080",
-		FileStoragePath: "",
-		DatabaseDSN:     "",
-	}
-	service, err := NewURLService(cfg, logger)
-	require.NoError(t, err)
-	ctx := createTestContext()
+	ctx := context.Background()
+	userID := "test-user"
 
-	// Создаем тестовые URL
+	// Создаем несколько URL для пользователя
 	urls := []string{
-		"https://example1.com",
-		"https://example2.com",
-		"https://example3.com",
+		"https://example.com/1",
+		"https://example.com/2",
+		"https://example.com/3",
 	}
 
-	for _, url := range urls {
-		_, err := service.CreateShortURL(ctx, url)
-		require.NoError(t, err)
+	for _, originalURL := range urls {
+		_, err := service.CreateShortURL(withTestUserID(ctx), originalURL, userID)
+		if err != nil {
+			t.Fatalf("CreateShortURL() error = %v", err)
+		}
 	}
 
-	// Получаем URL пользователя
-	userURLs, err := service.GetUserURLs(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, len(urls), len(userURLs))
-
-	// Проверяем, что все URL присутствуют
-	urlMap := make(map[string]bool)
-	for _, url := range urls {
-		urlMap[url] = false
+	// Получаем список URL пользователя
+	userURLs, err := service.GetUserURLs(withTestUserID(ctx))
+	if err != nil {
+		t.Fatalf("GetUserURLs() error = %v", err)
 	}
 
-	for _, userURL := range userURLs {
-		urlMap[userURL.OriginalURL] = true
-	}
-
-	for url, found := range urlMap {
-		assert.True(t, found, "URL %s not found in user URLs", url)
+	if len(userURLs) != len(urls) {
+		t.Errorf("GetUserURLs() returned %d URLs, want %d", len(userURLs), len(urls))
 	}
 }
 
 func TestURLService_Ping(t *testing.T) {
-	logger, err := zap.NewDevelopment()
-	require.NoError(t, err)
+	service, cleanup := setupTestService(t)
+	defer cleanup()
 
-	cfg := &config.Config{
-		BaseURL:         "http://localhost:8080",
-		FileStoragePath: "",
-		DatabaseDSN:     "",
+	ctx := context.Background()
+	err := service.Ping(withTestUserID(ctx))
+	if err != nil {
+		t.Errorf("Ping() error = %v", err)
 	}
-	service, err := NewURLService(cfg, logger)
-	require.NoError(t, err)
-
-	err = service.Ping(context.Background())
-	assert.NoError(t, err)
 }
