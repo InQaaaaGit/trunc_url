@@ -1,70 +1,88 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"go.uber.org/zap"
-
+	"github.com/InQaaaaGit/trunc_url.git/internal/app"
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
-	"github.com/InQaaaaGit/trunc_url.git/internal/handler"
-	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"go.uber.org/zap"
 )
 
-func main() {
-	// Инициализация конфигурации
-	cfg, err := config.NewConfig()
+// getConfig возвращает конфигурацию приложения
+func getConfig() *config.Config {
+	return &config.Config{
+		ServerAddress:   getEnv("SERVER_ADDRESS", ":8080"),
+		BaseURL:         getEnv("BASE_URL", "http://localhost:8080"),
+		FileStoragePath: getEnv("FILE_STORAGE_PATH", ""),
+		DatabaseDSN:     getEnv("DATABASE_DSN", ""),
+	}
+}
+
+// getEnv возвращает значение переменной окружения или дефолтное значение
+func getEnv(key, defaultValue string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return defaultValue
+}
+
+// setupLogger создает и настраивает логгер
+func setupLogger() (*zap.Logger, error) {
+	return zap.NewDevelopment()
+}
+
+// runServer запускает HTTP сервер
+func runServer(ctx context.Context) error {
+	cfg := getConfig()
+	logger, err := setupLogger()
 	if err != nil {
-		log.Fatalf("Error loading config: %v", err)
+		return fmt.Errorf("error creating logger: %w", err)
 	}
 
-	// Инициализация логгера
-	logger, err := zap.NewProduction()
+	application, err := app.NewApp(cfg)
 	if err != nil {
-		log.Fatalf("Error initializing logger: %v", err)
+		return fmt.Errorf("error creating application: %w", err)
 	}
-	defer func() {
-		if err := logger.Sync(); err != nil {
-			log.Printf("Error syncing logger: %v", err)
+
+	server := application.GetServer()
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("Error starting server", zap.Error(err))
 		}
 	}()
 
-	// Создание сервиса
-	service, err := service.NewURLService(cfg, logger)
-	if err != nil {
-		logger.Fatal("Error creating service", zap.Error(err))
+	// Ожидаем сигнал завершения
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case <-ctx.Done():
+		logger.Info("Context cancelled, shutting down server")
+	case sig := <-sigChan:
+		logger.Info("Received signal, shutting down server", zap.String("signal", sig.String()))
 	}
 
-	// Создание обработчика
-	handler := handler.NewHandler(service, cfg, logger)
+	// Создаем контекст с таймаутом для graceful shutdown
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// Настройка маршрутизатора
-	r := chi.NewRouter()
-
-	// Middleware
-	r.Use(handler.WithLogging)
-	r.Use(handler.WithGzip)
-
-	// Маршруты
-	r.Post("/", handler.HandleCreateURL)
-	r.Get("/{shortID}", handler.HandleRedirect)
-	r.Post("/api/shorten", handler.HandleShortenURL)
-	r.Post("/api/shorten/batch", handler.HandleShortenBatch)
-	r.Get("/ping", handler.HandlePing)
-
-	// Запуск сервера
-	server := &http.Server{
-		Addr:         cfg.ServerAddress,
-		Handler:      r,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("error shutting down server: %w", err)
 	}
 
-	logger.Info("Starting server", zap.String("address", cfg.ServerAddress))
-	if err := server.ListenAndServe(); err != nil {
-		logger.Fatal("Server error", zap.Error(err))
+	return nil
+}
+
+func main() {
+	ctx := context.Background()
+	if err := runServer(ctx); err != nil {
+		log.Fatalf("Error running server: %v", err)
 	}
 }

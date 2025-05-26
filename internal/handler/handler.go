@@ -131,10 +131,10 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	originalURL, err := h.service.GetOriginalURL(ctx, shortID)
 	if err != nil {
 		switch {
-		case errors.Is(err, storage.ErrURLNotFound):
-			h.logger.Info("URL not found", zap.String("short_id", shortID))
-			http.Error(w, urlNotFoundMessage, http.StatusNotFound)
 		case errors.Is(err, storage.ErrInvalidURL):
+			h.logger.Error("Invalid URL format", zap.String("short_id", shortID), zap.Error(err))
+			http.Error(w, invalidURLMessage, http.StatusBadRequest)
+		case errors.Is(err, storage.ErrURLNotFound):
 			h.logger.Error("Invalid URL format", zap.String("short_id", shortID), zap.Error(err))
 			http.Error(w, invalidURLMessage, http.StatusBadRequest)
 		default:
