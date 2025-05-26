@@ -14,6 +14,7 @@ import (
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
+	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 )
@@ -58,7 +59,10 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, contentTypePlain) && !strings.HasPrefix(contentType, "application/x-gzip") {
+	// Проверяем, что Content-Type начинается с text/plain или является gzip
+	if !strings.HasPrefix(contentType, contentTypePlain) &&
+		!strings.Contains(contentType, "gzip") &&
+		!strings.Contains(contentType, "application/x-gzip") {
 		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
 		return
 	}
@@ -115,7 +119,7 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID := strings.Trim(r.URL.Path, "/")
+	shortID := chi.URLParam(r, "id")
 	if shortID == "" {
 		http.Error(w, "Empty shortID", http.StatusBadRequest)
 		return
@@ -126,12 +130,17 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	originalURL, err := h.service.GetOriginalURL(ctx, shortID)
 	if err != nil {
-		if errors.Is(err, storage.ErrURLNotFound) {
-			http.Error(w, urlNotFoundMessage, http.StatusBadRequest)
-			return
+		switch {
+		case errors.Is(err, storage.ErrURLNotFound):
+			h.logger.Info("URL not found", zap.String("short_id", shortID))
+			http.Error(w, urlNotFoundMessage, http.StatusNotFound)
+		case errors.Is(err, storage.ErrInvalidURL):
+			h.logger.Error("Invalid URL format", zap.String("short_id", shortID), zap.Error(err))
+			http.Error(w, invalidURLMessage, http.StatusBadRequest)
+		default:
+			h.logger.Error("Error getting original URL", zap.String("short_id", shortID), zap.Error(err))
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
-		h.logger.Error("Error getting original URL", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 

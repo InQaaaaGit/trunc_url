@@ -81,20 +81,10 @@ func (a *App) Configure() error {
 	if err != nil {
 		return err
 	}
-	handler := handler.NewHandler(urlService, a.config, a.logger)
+	a.handler = handler.NewHandler(urlService, a.config, a.logger)
 
-	// Подключаем middleware
-	a.router.Use(handler.WithLogging)
-	a.router.Use(handler.WithGzip)
-
-	// Регистрация маршрутов
-	a.router.Post("/", handler.HandleCreateURL)
-	a.router.Post("/api/shorten", handler.HandleShortenURL)
-	a.router.Post("/api/shorten/batch", handler.HandleShortenBatch)
-	a.router.Get("/{shortID}", handler.HandleRedirect)
-
-	// Добавляем хендлер для проверки доступности БД
-	a.router.Get("/ping", handler.HandlePing)
+	// Настраиваем маршруты
+	a.setupRoutes()
 
 	return nil
 }

@@ -2,8 +2,11 @@ package storage
 
 import "errors"
 
-// ErrURLNotFound возвращается, когда URL не найден в хранилище
-var ErrURLNotFound = errors.New("URL not found")
-
-// ErrOriginalURLConflict возвращается, когда original_url уже существует
-var ErrOriginalURLConflict = errors.New("original URL conflict")
+var (
+	// ErrURLNotFound возвращается, когда URL не найден
+	ErrURLNotFound = errors.New("URL not found")
+	// ErrOriginalURLConflict возвращается при попытке сохранить уже существующий оригинальный URL
+	ErrOriginalURLConflict = errors.New("original URL already exists")
+	// ErrInvalidURL возвращается при попытке сохранить некорректный URL
+	ErrInvalidURL = errors.New("invalid URL format")
+)

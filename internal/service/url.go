@@ -86,16 +86,15 @@ func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 	}, nil // There should be no errors here, as MemoryStorage always succeeds
 }
 
-// CreateShortURL creates a short URL from the original
+// CreateShortURL создает короткий URL из оригинального
 func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
 	if originalURL == "" {
 		return "", fmt.Errorf("empty URL")
 	}
 
-	// Check URL validity
-	_, err := url.ParseRequestURI(originalURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL format")
+	// Проверяем формат URL
+	if _, err := url.ParseRequestURI(originalURL); err != nil {
+		return "", storage.ErrInvalidURL
 	}
 
 	// Получаем userID из контекста
@@ -104,42 +103,20 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string)
 		return "", fmt.Errorf("user_id not found in context")
 	}
 
-	// Check if URL already exists
-	existingShortURL, err := s.storage.GetShortURLByOriginal(ctx, originalURL)
-	if err == nil {
-		// URL already exists, return existing short URL
-		s.logger.Info("URL already exists, returning existing short URL",
-			zap.String("original_url", originalURL),
-			zap.String("short_url", existingShortURL))
-		return existingShortURL, storage.ErrOriginalURLConflict
+	// Проверяем, существует ли уже такой URL
+	if shortURL, err := s.storage.GetShortURLByOriginal(ctx, originalURL); err == nil {
+		return shortURL, storage.ErrOriginalURLConflict
 	}
 
+	// Генерируем короткий URL
 	hash := sha256.Sum256([]byte(originalURL))
 	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
 
-	err = s.storage.SaveUserURL(ctx, userID, shortURL, originalURL)
-	if err != nil {
-		// Check if the error is due to a conflict with the original URL
-		if errors.Is(err, storage.ErrOriginalURLConflict) {
-			// If URL already exists, get existing shortURL
-			log.Printf("Conflict: Original URL '%s' already exists. Getting existing short URL.", originalURL)
-			existingShortURL, getErr := s.storage.GetShortURLByOriginal(ctx, originalURL)
-			if getErr != nil {
-				// This situation should not occur if Save returned a conflict,
-				// but we handle it on the safe side
-				log.Printf("Critical error: failed to get short URL for existing original URL '%s': %v", originalURL, getErr)
-				return "", fmt.Errorf("error getting existing short URL: %w", getErr)
-			}
-			// Return existing shortURL and conflict error for handling in the handler
-			return existingShortURL, storage.ErrOriginalURLConflict
-		}
-
-		// For other saving errors, just log and return
-		log.Printf("Error saving URL: %v", err)
-		return "", err
+	// Сохраняем URL с привязкой к пользователю
+	if err := s.storage.SaveUserURL(ctx, userID, shortURL, originalURL); err != nil {
+		return "", fmt.Errorf("error saving URL: %w", err)
 	}
 
-	// If there's no error, return new shortURL
 	return shortURL, nil
 }
 
