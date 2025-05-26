@@ -80,7 +80,8 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID, err := h.service.CreateShortURL(r.Context(), originalURL)
+	ctx := r.Context()
+	shortID, err := h.service.CreateShortURL(ctx, originalURL)
 	shortURL := h.cfg.BaseURL + "/" + shortID
 
 	if err != nil {
@@ -120,7 +121,8 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("Attempting to get original URL", zap.String("short_id", shortID))
 
-	originalURL, err := h.service.GetOriginalURL(r.Context(), shortID)
+	ctx := r.Context()
+	originalURL, err := h.service.GetOriginalURL(ctx, shortID)
 	if err != nil {
 		if errors.Is(err, storage.ErrURLNotFound) {
 			http.Error(w, urlNotFoundMessage, http.StatusBadRequest)
@@ -173,7 +175,8 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID, err := h.service.CreateShortURL(r.Context(), req.URL)
+	ctx := r.Context()
+	shortID, err := h.service.CreateShortURL(ctx, req.URL)
 	shortURL := h.cfg.BaseURL + "/" + shortID
 	response := ShortenResponse{
 		Result: shortURL,
@@ -232,7 +235,8 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respBatch, err := h.service.CreateShortURLsBatch(r.Context(), reqBatch)
+	ctx := r.Context()
+	respBatch, err := h.service.CreateShortURLsBatch(ctx, reqBatch)
 	if err != nil {
 		h.logger.Error("Error processing batch", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -245,6 +249,23 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(respBatch); err != nil {
 		h.logger.Error("Error writing response", zap.Error(err))
 	}
+}
+
+// HandlePing обрабатывает запрос на проверку соединения с базой данных
+func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+	if err := h.service.CheckConnection(ctx); err != nil {
+		h.logger.Error("Ошибка подключения к хранилищу", zap.Error(err))
+		http.Error(w, "Storage connection error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // WithLogging добавляет логирование запросов
