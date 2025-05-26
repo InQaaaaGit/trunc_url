@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/lib/pq" // Используем pq для проверки ошибки
 	"go.uber.org/zap"
@@ -23,17 +24,35 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 	// Подключение к базе данных
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
-		return nil, fmt.Errorf("database connection error: %w", err)
+		return nil, fmt.Errorf("ошибка подключения к БД: %w", err)
 	}
 
-	// Проверка соединения
+	// Настройка пула соединений
+	// Максимальное количество открытых соединений
+	// Рекомендуется устанавливать в зависимости от количества CPU и ожидаемой нагрузки
+	// Для большинства приложений достаточно 25-50 соединений
+	db.SetMaxOpenConns(25)
+
+	// Максимальное количество неактивных соединений в пуле
+	// Обычно устанавливается меньше MaxOpenConns
+	db.SetMaxIdleConns(10)
+
+	// Максимальное время жизни соединения
+	// Рекомендуется устанавливать меньше, чем timeout на стороне БД
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	// Максимальное время простоя соединения
+	// Помогает освобождать неиспользуемые соединения
+	db.SetConnMaxIdleTime(1 * time.Minute)
+
+	// Проверяем соединение
 	ctx := context.Background()
 	if err := db.PingContext(ctx); err != nil {
 		// Закрываем соединение в случае ошибки Ping
 		if closeErr := db.Close(); closeErr != nil {
 			log.Printf("Failed to close DB connection after ping error: %v", closeErr)
 		}
-		return nil, fmt.Errorf("database connection check error: %w", err)
+		return nil, fmt.Errorf("ошибка проверки соединения с БД: %w", err)
 	}
 
 	// Создание таблицы urls, если её ещё нет
