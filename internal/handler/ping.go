@@ -3,7 +3,6 @@ package handler
 import (
 	"net/http"
 
-	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"go.uber.org/zap"
 )
 
@@ -14,18 +13,10 @@ func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Проверяем, есть ли в сервисе хранилище с возможностью проверки соединения
-	dbChecker, ok := h.service.GetStorage().(storage.DatabaseChecker)
-	if !ok {
-		// Если хранилище не реализует интерфейс DatabaseChecker, возвращаем ошибку
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	// Проверяем соединение с БД
-	if err := dbChecker.CheckConnection(r.Context()); err != nil {
-		h.logger.Error("Ошибка подключения к БД", zap.Error(err))
-		http.Error(w, "Database connection error", http.StatusInternalServerError)
+	// Проверяем соединение через сервис
+	if err := h.service.CheckConnection(r.Context()); err != nil {
+		h.logger.Error("Ошибка подключения к хранилищу", zap.Error(err))
+		http.Error(w, "Storage connection error", http.StatusInternalServerError)
 		return
 	}
 

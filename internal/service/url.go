@@ -21,6 +21,7 @@ type URLService interface {
 	GetOriginalURL(ctx context.Context, shortURL string) (string, error)
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	CheckConnection(ctx context.Context) error
 }
 
 // URLServiceImpl implements the URLService
@@ -222,4 +223,14 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 // GetStorage returns the URL storage
 func (s *URLServiceImpl) GetStorage() storage.URLStorage {
 	return s.storage
+}
+
+// CheckConnection проверяет соединение с хранилищем
+func (s *URLServiceImpl) CheckConnection(ctx context.Context) error {
+	// Проверяем, реализует ли хранилище интерфейс DatabaseChecker
+	if checker, ok := s.storage.(storage.DatabaseChecker); ok {
+		return checker.CheckConnection(ctx)
+	}
+	// Если хранилище не поддерживает проверку соединения, считаем что оно доступно
+	return nil
 }

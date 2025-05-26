@@ -23,6 +23,7 @@ type mockURLService struct {
 	getOriginalURLFunc       func(ctx context.Context, shortURL string) (string, error)
 	createShortURLsBatchFunc func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	getStorageFunc           func() storage.URLStorage
+	checkConnectionFunc      func(ctx context.Context) error
 }
 
 func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
@@ -51,6 +52,13 @@ func (m *mockURLService) GetStorage() storage.URLStorage {
 		return m.getStorageFunc()
 	}
 	return nil
+}
+
+func (m *mockURLService) CheckConnection(ctx context.Context) error {
+	if m.checkConnectionFunc != nil {
+		return m.checkConnectionFunc(ctx)
+	}
+	return errors.New("not implemented")
 }
 
 // mockDatabaseChecker реализует интерфейсы storage.URLStorage и storage.DatabaseChecker для тестов
@@ -303,12 +311,8 @@ func TestHandlePing(t *testing.T) {
 			name:   "Valid ping",
 			method: http.MethodGet,
 			mockService: &mockURLService{
-				getStorageFunc: func() storage.URLStorage {
-					return &mockDatabaseChecker{
-						checkConnectionFunc: func(ctx context.Context) error {
-							return nil
-						},
-					}
+				checkConnectionFunc: func(ctx context.Context) error {
+					return nil
 				},
 			},
 			expectedStatus: http.StatusOK,
@@ -320,25 +324,11 @@ func TestHandlePing(t *testing.T) {
 			expectedStatus: http.StatusMethodNotAllowed,
 		},
 		{
-			name:   "Not a database storage",
+			name:   "Connection error",
 			method: http.MethodGet,
 			mockService: &mockURLService{
-				getStorageFunc: func() storage.URLStorage {
-					return &mockStorage{}
-				},
-			},
-			expectedStatus: http.StatusInternalServerError,
-		},
-		{
-			name:   "Database error",
-			method: http.MethodGet,
-			mockService: &mockURLService{
-				getStorageFunc: func() storage.URLStorage {
-					return &mockDatabaseChecker{
-						checkConnectionFunc: func(ctx context.Context) error {
-							return errors.New("database error")
-						},
-					}
+				checkConnectionFunc: func(ctx context.Context) error {
+					return errors.New("connection error")
 				},
 			},
 			expectedStatus: http.StatusInternalServerError,
