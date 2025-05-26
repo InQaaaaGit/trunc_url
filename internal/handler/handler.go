@@ -233,7 +233,11 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unable to read request body", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			h.logger.Error("Ошибка при закрытии тела запроса", zap.Error(err))
+		}
+	}()
 
 	if err := json.Unmarshal(bodyBytes, &reqBatch); err != nil {
 		h.logger.Error("Error decoding batch request JSON", zap.Error(err), zap.ByteString("body", bodyBytes))
