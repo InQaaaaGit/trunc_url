@@ -87,19 +87,59 @@ func TestAppRoutes(t *testing.T) {
 		name       string
 		method     string
 		path       string
+		headers    map[string]string
 		wantStatus int
 	}{
-		{"POST /", http.MethodPost, "/", http.StatusMethodNotAllowed},
-		{"GET /{id}", http.MethodGet, "/abc123", http.StatusTemporaryRedirect},
-		{"POST /api/shorten", http.MethodPost, "/api/shorten", http.StatusMethodNotAllowed},
-		{"POST /api/shorten/batch", http.MethodPost, "/api/shorten/batch", http.StatusMethodNotAllowed},
-		{"GET /api/user/urls", http.MethodGet, "/api/user/urls", http.StatusUnauthorized},
-		{"GET /ping", http.MethodGet, "/ping", http.StatusOK},
+		{
+			name:       "POST /",
+			method:     http.MethodPost,
+			path:       "/",
+			headers:    map[string]string{"Content-Type": "text/plain"},
+			wantStatus: http.StatusBadRequest, // Ожидаем 400 из-за пустого тела запроса
+		},
+		{
+			name:       "GET /{id}",
+			method:     http.MethodGet,
+			path:       "/abc123",
+			headers:    map[string]string{},
+			wantStatus: http.StatusBadRequest, // Ожидаем 400 из-за неверного формата URL
+		},
+		{
+			name:       "POST /api/shorten",
+			method:     http.MethodPost,
+			path:       "/api/shorten",
+			headers:    map[string]string{"Content-Type": "application/json"},
+			wantStatus: http.StatusBadRequest, // Ожидаем 400 из-за пустого тела запроса
+		},
+		{
+			name:       "POST /api/shorten/batch",
+			method:     http.MethodPost,
+			path:       "/api/shorten/batch",
+			headers:    map[string]string{"Content-Type": "application/json"},
+			wantStatus: http.StatusBadRequest, // Ожидаем 400 из-за пустого тела запроса
+		},
+		{
+			name:       "GET /api/user/urls",
+			method:     http.MethodGet,
+			path:       "/api/user/urls",
+			headers:    map[string]string{},
+			wantStatus: http.StatusUnauthorized, // Ожидаем 401 из-за отсутствия токена
+		},
+		{
+			name:       "GET /ping",
+			method:     http.MethodGet,
+			path:       "/ping",
+			headers:    map[string]string{},
+			wantStatus: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(tt.method, tt.path, nil)
+			for key, value := range tt.headers {
+				req.Header.Set(key, value)
+			}
 			rr := httptest.NewRecorder()
 			app.router.ServeHTTP(rr, req)
 			assert.Equal(t, tt.wantStatus, rr.Code)

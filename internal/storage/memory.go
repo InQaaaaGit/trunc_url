@@ -10,134 +10,100 @@ import (
 	"go.uber.org/zap"
 )
 
-// MemoryStorage реализует URLStorage с использованием памяти
+// MemoryStorage реализует хранение URL в памяти
 type MemoryStorage struct {
-	mu       sync.RWMutex
-	urls     map[string]string
-	userURLs map[string][]models.UserURL // map[userID][]UserURL
-	logger   *zap.Logger
+	urls   map[string]string            // shortURL -> originalURL
+	users  map[string]map[string]string // userID -> map[shortURL]originalURL
+	mutex  sync.RWMutex
+	logger *zap.Logger
 }
 
 // NewMemoryStorage создает новый экземпляр MemoryStorage
 func NewMemoryStorage(logger *zap.Logger) *MemoryStorage {
 	return &MemoryStorage{
-		urls:     make(map[string]string),
-		userURLs: make(map[string][]models.UserURL),
-		logger:   logger,
+		urls:   make(map[string]string),
+		users:  make(map[string]map[string]string),
+		logger: logger,
 	}
 }
 
-// Save сохраняет URL в памяти
-func (ms *MemoryStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+// SaveURL сохраняет пару короткий URL - оригинальный URL
+func (s *MemoryStorage) SaveURL(ctx context.Context, shortURL, originalURL string) error {
 	// Получаем userID из контекста
 	userID, ok := ctx.Value(middleware.UserIDKey).(string)
 	if !ok {
 		return fmt.Errorf("user_id not found in context")
 	}
 
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
-	ms.urls[shortURL] = originalURL
+	// Сохраняем URL
+	s.urls[shortURL] = originalURL
 
-	// Добавляем URL в список пользователя
-	userURL := models.UserURL{
-		ShortURL:    shortURL,
-		OriginalURL: originalURL,
+	// Сохраняем связь с пользователем
+	if _, exists := s.users[userID]; !exists {
+		s.users[userID] = make(map[string]string)
 	}
-	ms.userURLs[userID] = append(ms.userURLs[userID], userURL)
+	s.users[userID][shortURL] = originalURL
 
 	return nil
 }
 
-// Get получает оригинальный URL по короткому
-func (ms *MemoryStorage) Get(ctx context.Context, shortURL string) (string, error) {
-	ms.mu.RLock()
-	defer ms.mu.RUnlock()
+// GetOriginalURL возвращает оригинальный URL по короткому URL
+func (s *MemoryStorage) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-	if url, exists := ms.urls[shortURL]; exists {
-		return url, nil
+	originalURL, exists := s.urls[shortURL]
+	if !exists {
+		return "", ErrURLNotFound
 	}
 
-	return "", ErrURLNotFound
+	return originalURL, nil
 }
 
-// GetShortURLByOriginal получает короткий URL по оригинальному
-func (ms *MemoryStorage) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
-	ms.mu.RLock()
-	defer ms.mu.RUnlock()
+// GetShortURL возвращает короткий URL по оригинальному URL
+func (s *MemoryStorage) GetShortURL(ctx context.Context, originalURL string) (string, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-	for short, orig := range ms.urls {
-		if orig == originalURL {
-			return short, nil
+	for shortURL, url := range s.urls {
+		if url == originalURL {
+			return shortURL, nil
 		}
 	}
 
 	return "", ErrURLNotFound
 }
 
-// SaveBatch сохраняет пакет URL
-func (ms *MemoryStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error {
-	// Получаем userID из контекста
-	userID, ok := ctx.Value(middleware.UserIDKey).(string)
-	if !ok {
-		return fmt.Errorf("user_id not found in context")
+// GetUserURLs возвращает список URL пользователя
+func (s *MemoryStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	userURLs, exists := s.users[userID]
+	if !exists {
+		return nil, nil
 	}
 
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-
-	for _, entry := range batch {
-		ms.urls[entry.ShortURL] = entry.OriginalURL
-
-		// Добавляем URL в список пользователя
-		userURL := models.UserURL{
-			ShortURL:    entry.ShortURL,
-			OriginalURL: entry.OriginalURL,
-		}
-		ms.userURLs[userID] = append(ms.userURLs[userID], userURL)
+	urls := make([]models.UserURL, 0, len(userURLs))
+	for shortURL, originalURL := range userURLs {
+		urls = append(urls, models.UserURL{
+			ShortURL:    shortURL,
+			OriginalURL: originalURL,
+		})
 	}
 
-	return nil
+	return urls, nil
 }
 
-// SaveUserURL сохраняет URL пользователя
-func (ms *MemoryStorage) SaveUserURL(ctx context.Context, userID, shortURL, originalURL string) error {
-	ms.mu.Lock()
-	defer ms.mu.Unlock()
-
-	ms.urls[shortURL] = originalURL
-
-	// Добавляем URL в список пользователя
-	userURL := models.UserURL{
-		ShortURL:    shortURL,
-		OriginalURL: originalURL,
-	}
-	ms.userURLs[userID] = append(ms.userURLs[userID], userURL)
-
-	return nil
+// CheckConnection проверяет соединение с хранилищем
+func (s *MemoryStorage) CheckConnection(ctx context.Context) error {
+	return nil // Для in-memory хранилища всегда OK
 }
 
-// GetUserURLs получает все URL пользователя
-func (ms *MemoryStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	ms.mu.RLock()
-	defer ms.mu.RUnlock()
-
-	if urls, exists := ms.userURLs[userID]; exists {
-		return urls, nil
-	}
-
-	return []models.UserURL{}, nil
-}
-
-// CheckConnection проверяет доступность хранилища
-func (ms *MemoryStorage) CheckConnection(ctx context.Context) error {
-	ms.mu.RLock()
-	defer ms.mu.RUnlock()
-
-	if ms.urls == nil {
-		return fmt.Errorf("storage is not initialized")
-	}
-
-	return nil
+// Close закрывает соединение с хранилищем
+func (s *MemoryStorage) Close() error {
+	return nil // Для in-memory хранилища ничего не нужно закрывать
 }

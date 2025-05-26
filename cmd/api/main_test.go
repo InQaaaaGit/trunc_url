@@ -2,10 +2,16 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/InQaaaaGit/trunc_url.git/internal/app"
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -96,4 +102,100 @@ func TestRunServer(t *testing.T) {
 
 	// Ждем завершения контекста
 	<-ctx.Done()
+}
+
+func TestAPIEndpoints(t *testing.T) {
+	cfg := &config.Config{
+		ServerAddress:   ":8080",
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+
+	appInstance, err := app.NewApp(cfg)
+	require.NoError(t, err)
+
+	// Создаем тестовый сервер
+	ts := httptest.NewServer(appInstance.Router())
+	defer ts.Close()
+
+	// Создаем тестовые запросы
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		headers    map[string]string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "POST /api/shorten - пустой запрос",
+			method:     http.MethodPost,
+			path:       "/api/shorten",
+			body:       "",
+			headers:    map[string]string{"Content-Type": "application/json"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "empty request body",
+		},
+		{
+			name:       "POST /api/shorten - неверный формат JSON",
+			method:     http.MethodPost,
+			path:       "/api/shorten",
+			body:       `{"url":}`,
+			headers:    map[string]string{"Content-Type": "application/json"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid request format",
+		},
+		{
+			name:       "POST /api/shorten - неверный Content-Type",
+			method:     http.MethodPost,
+			path:       "/api/shorten",
+			body:       `{"url":"http://example.com"}`,
+			headers:    map[string]string{"Content-Type": "text/plain"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid content type",
+		},
+		{
+			name:       "POST /api/shorten/batch - пустой запрос",
+			method:     http.MethodPost,
+			path:       "/api/shorten/batch",
+			body:       "",
+			headers:    map[string]string{"Content-Type": "application/json"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "empty request body",
+		},
+		{
+			name:       "GET /api/user/urls - без токена",
+			method:     http.MethodGet,
+			path:       "/api/user/urls",
+			body:       "",
+			headers:    map[string]string{},
+			wantStatus: http.StatusUnauthorized,
+			wantBody:   "unauthorized",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(tt.method, ts.URL+tt.path, strings.NewReader(tt.body))
+			require.NoError(t, err)
+
+			for key, value := range tt.headers {
+				req.Header.Set(key, value)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+
+			if tt.wantBody != "" {
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.Contains(t, string(body), tt.wantBody)
+			}
+		})
+	}
 }

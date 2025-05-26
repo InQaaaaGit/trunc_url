@@ -2,12 +2,19 @@ package main
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/InQaaaaGit/trunc_url.git/internal/app"
+	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 )
 
 func TestMain(m *testing.M) {
@@ -96,4 +103,91 @@ func TestRunServer(t *testing.T) {
 
 	// Ждем завершения контекста
 	<-ctx.Done()
+}
+
+func TestShortenerEndpoints(t *testing.T) {
+	cfg := &config.Config{
+		ServerAddress:   ":8080",
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+
+	appInstance, err := app.NewApp(cfg)
+	require.NoError(t, err)
+
+	// Создаем тестовый сервер
+	ts := httptest.NewServer(appInstance.Router())
+	defer ts.Close()
+
+	// Создаем тестовые запросы
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       string
+		headers    map[string]string
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "POST / - пустой запрос",
+			method:     http.MethodPost,
+			path:       "/",
+			body:       "",
+			headers:    map[string]string{"Content-Type": "text/plain"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "empty request body",
+		},
+		{
+			name:       "POST / - неверный формат URL",
+			method:     http.MethodPost,
+			path:       "/",
+			body:       "invalid-url",
+			headers:    map[string]string{"Content-Type": "text/plain"},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "invalid URL format",
+		},
+		{
+			name:       "GET /{id} - несуществующий URL",
+			method:     http.MethodGet,
+			path:       "/nonexistent",
+			body:       "",
+			headers:    map[string]string{},
+			wantStatus: http.StatusBadRequest,
+			wantBody:   "URL not found",
+		},
+		{
+			name:       "GET /ping",
+			method:     http.MethodGet,
+			path:       "/ping",
+			body:       "",
+			headers:    map[string]string{},
+			wantStatus: http.StatusOK,
+			wantBody:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest(tt.method, ts.URL+tt.path, strings.NewReader(tt.body))
+			require.NoError(t, err)
+
+			for key, value := range tt.headers {
+				req.Header.Set(key, value)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+
+			assert.Equal(t, tt.wantStatus, resp.StatusCode)
+
+			if tt.wantBody != "" {
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				assert.Contains(t, string(body), tt.wantBody)
+			}
+		})
+	}
 }

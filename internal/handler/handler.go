@@ -51,214 +51,212 @@ func NewHandler(service service.URLService, cfg *config.Config, logger *zap.Logg
 	}
 }
 
-// HandleCreateURL обрабатывает POST запрос для создания короткого URL
+// HandleCreateURL обрабатывает POST запросы для создания коротких URL
 func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	// Проверяем, что Content-Type начинается с text/plain или является gzip
-	if !strings.HasPrefix(contentType, contentTypePlain) &&
-		!strings.Contains(contentType, "gzip") &&
-		!strings.Contains(contentType, "application/x-gzip") {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+	if !strings.HasPrefix(contentType, contentTypePlain) && !strings.Contains(contentType, "gzip") && !strings.Contains(contentType, "application/x-gzip") {
+		http.Error(w, "invalid content type", http.StatusBadRequest)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		h.logger.Error("failed to read request body", zap.Error(err))
+		http.Error(w, "failed to read request body", http.StatusInternalServerError)
 		return
 	}
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.logger.Error("Error closing request body", zap.Error(err))
-		}
-	}()
+	defer r.Body.Close()
 
-	originalURL := strings.TrimSpace(string(body))
-	h.logger.Info("Received URL in POST request", zap.String("url", originalURL))
-
-	if originalURL == "" {
-		http.Error(w, emptyURLMessage, http.StatusBadRequest)
+	if len(body) == 0 {
+		http.Error(w, "empty request body", http.StatusBadRequest)
 		return
 	}
 
-	ctx := r.Context()
-	shortID, err := h.service.CreateShortURL(ctx, originalURL)
-	shortURL := h.cfg.BaseURL + "/" + shortID
-
+	originalURL := string(body)
+	shortURL, err := h.service.CreateShortURL(r.Context(), originalURL)
 	if err != nil {
-		if errors.Is(err, storage.ErrOriginalURLConflict) {
-			h.logger.Info("URL already exists (conflict)", zap.String("original_url", originalURL), zap.String("short_url", shortURL))
-			w.Header().Set("Content-Type", contentTypePlain)
+		switch {
+		case errors.Is(err, storage.ErrInvalidURL):
+			h.logger.Info("invalid URL format", zap.String("url", originalURL))
+			http.Error(w, "invalid URL format", http.StatusBadRequest)
+		case errors.Is(err, storage.ErrOriginalURLConflict):
+			h.logger.Info("URL already exists", zap.String("url", originalURL))
+			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusConflict)
-			if _, writeErr := w.Write([]byte(shortURL)); writeErr != nil {
-				h.logger.Error("Error writing response (conflict)", zap.Error(writeErr))
+			if _, err := w.Write([]byte(shortURL)); err != nil {
+				h.logger.Error("failed to write response", zap.Error(err))
+				return
 			}
-			return
+		default:
+			h.logger.Error("failed to create short URL", zap.Error(err))
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
-		h.logger.Error("Error creating short URL", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypePlain)
+	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write([]byte(shortURL)); err != nil {
-		h.logger.Error("Error writing response", zap.Error(err))
+		h.logger.Error("failed to write response", zap.Error(err))
+		return
 	}
 }
 
-// HandleRedirect обрабатывает GET запрос для перенаправления по короткому URL
+// HandleRedirect обрабатывает GET запросы для перенаправления на оригинальный URL
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	shortID := chi.URLParam(r, "id")
 	if shortID == "" {
-		http.Error(w, "Empty shortID", http.StatusBadRequest)
+		http.Error(w, "invalid short URL ID", http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("Attempting to get original URL", zap.String("short_id", shortID))
+	originalURL, err := h.service.GetOriginalURL(r.Context(), shortID)
+	if err != nil {
+		switch {
+		case errors.Is(err, storage.ErrURLNotFound):
+			h.logger.Info("URL not found", zap.String("shortID", shortID))
+			http.Error(w, "URL not found", http.StatusBadRequest)
+		case errors.Is(err, storage.ErrInvalidURL):
+			h.logger.Info("invalid URL format", zap.String("shortID", shortID))
+			http.Error(w, "invalid URL format", http.StatusBadRequest)
+		default:
+			h.logger.Error("failed to get original URL", zap.Error(err))
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
 
-	ctx := r.Context()
-	originalURL, err := h.service.GetOriginalURL(ctx, shortID)
+	http.Redirect(w, r, originalURL, http.StatusTemporaryRedirect)
+}
+
+// HandleShortenURL обрабатывает POST запросы для создания коротких URL через API
+func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !strings.Contains(contentType, "application/json") {
+		http.Error(w, "invalid content type", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		URL string `json:"url"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("failed to decode request", zap.Error(err))
+		http.Error(w, "invalid request format", http.StatusBadRequest)
+		return
+	}
+
+	if req.URL == "" {
+		http.Error(w, "empty URL in request", http.StatusBadRequest)
+		return
+	}
+
+	shortURL, err := h.service.CreateShortURL(r.Context(), req.URL)
 	if err != nil {
 		switch {
 		case errors.Is(err, storage.ErrInvalidURL):
-			h.logger.Error("Invalid URL format", zap.String("short_id", shortID), zap.Error(err))
-			http.Error(w, invalidURLMessage, http.StatusBadRequest)
-		case errors.Is(err, storage.ErrURLNotFound):
-			h.logger.Error("Invalid URL format", zap.String("short_id", shortID), zap.Error(err))
-			http.Error(w, invalidURLMessage, http.StatusBadRequest)
-		default:
-			h.logger.Error("Error getting original URL", zap.String("short_id", shortID), zap.Error(err))
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-		}
-		return
-	}
-
-	h.logger.Info("Setting Location header", zap.String("location", originalURL))
-	w.Header().Set("Location", originalURL)
-	w.WriteHeader(http.StatusTemporaryRedirect)
-}
-
-type ShortenRequest struct {
-	URL string `json:"url"`
-}
-
-type ShortenResponse struct {
-	Result string `json:"result"`
-}
-
-// HandleShortenURL обрабатывает POST запрос для создания короткого URL в формате JSON
-func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
-		return
-	}
-
-	var req ShortenRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.logger.Error("Error closing request body", zap.Error(err))
-		}
-	}()
-
-	if req.URL == "" {
-		http.Error(w, emptyURLMessage, http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
-	shortID, err := h.service.CreateShortURL(ctx, req.URL)
-	shortURL := h.cfg.BaseURL + "/" + shortID
-	response := ShortenResponse{
-		Result: shortURL,
-	}
-
-	if err != nil {
-		if errors.Is(err, storage.ErrOriginalURLConflict) {
-			h.logger.Info("URL already exists (conflict) in /api/shorten", zap.String("original_url", req.URL), zap.String("short_url", shortURL))
-			w.Header().Set("Content-Type", contentTypeJSON)
+			h.logger.Info("invalid URL format", zap.String("url", req.URL))
+			http.Error(w, "invalid URL format", http.StatusBadRequest)
+		case errors.Is(err, storage.ErrOriginalURLConflict):
+			h.logger.Info("URL already exists", zap.String("url", req.URL))
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
-			if err := json.NewEncoder(w).Encode(response); err != nil {
-				h.logger.Error("Error writing JSON response (conflict)", zap.Error(err))
+			if err := json.NewEncoder(w).Encode(map[string]string{"result": shortURL}); err != nil {
+				h.logger.Error("failed to encode response", zap.Error(err))
+				return
 			}
-			return
+		default:
+			h.logger.Error("failed to create short URL", zap.Error(err))
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 		}
-
-		h.logger.Error("Error creating short URL in /api/shorten", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypeJSON)
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.Error("Error writing JSON response", zap.Error(err))
+	if err := json.NewEncoder(w).Encode(map[string]string{"result": shortURL}); err != nil {
+		h.logger.Error("failed to encode response", zap.Error(err))
+		return
 	}
 }
 
-// HandleShortenBatch обрабатывает POST запрос для пакетного создания коротких URL
+// HandleShortenBatch обрабатывает POST запросы для пакетного создания коротких URL
 func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+	if !strings.Contains(contentType, "application/json") {
+		http.Error(w, "invalid content type", http.StatusBadRequest)
 		return
 	}
 
-	var reqBatch []models.BatchRequestEntry
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "Unable to read request body", http.StatusBadRequest)
+	var req []struct {
+		CorrelationID string `json:"correlation_id"`
+		OriginalURL   string `json:"original_url"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("failed to decode request", zap.Error(err))
+		http.Error(w, "invalid request format", http.StatusBadRequest)
 		return
 	}
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.logger.Error("Error closing request body", zap.Error(err))
+
+	if len(req) == 0 {
+		http.Error(w, "empty request body", http.StatusBadRequest)
+		return
+	}
+
+	batch := make([]service.URLBatchItem, len(req))
+	for i, item := range req {
+		if item.OriginalURL == "" {
+			http.Error(w, "empty URL in request", http.StatusBadRequest)
+			return
 		}
-	}()
-
-	if err := json.Unmarshal(bodyBytes, &reqBatch); err != nil {
-		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
-		return
+		batch[i] = service.URLBatchItem{
+			CorrelationID: item.CorrelationID,
+			OriginalURL:   item.OriginalURL,
+		}
 	}
 
-	ctx := r.Context()
-	respBatch, err := h.service.CreateShortURLsBatch(ctx, reqBatch)
+	results, err := h.service.CreateShortURLsBatch(r.Context(), batch)
 	if err != nil {
-		h.logger.Error("Error processing batch", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		h.logger.Error("failed to create short URLs batch", zap.Error(err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusCreated)
+	response := make([]map[string]string, len(results))
+	for i, result := range results {
+		response[i] = map[string]string{
+			"correlation_id": result.CorrelationID,
+			"short_url":      result.ShortURL,
+		}
+	}
 
-	if err := json.NewEncoder(w).Encode(respBatch); err != nil {
-		h.logger.Error("Error writing response", zap.Error(err))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("failed to encode response", zap.Error(err))
+		return
 	}
 }
 
@@ -270,7 +268,7 @@ func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	if err := h.service.CheckConnection(ctx); err != nil {
+	if err := h.service.Ping(ctx); err != nil {
 		h.logger.Error("Ошибка подключения к хранилищу", zap.Error(err))
 		http.Error(w, "Storage is no longer available", http.StatusGone)
 		return
@@ -279,44 +277,44 @@ func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// HandleGetUserURLs обрабатывает GET запрос для получения всех URL пользователя
+// HandleGetUserURLs обрабатывает GET запросы для получения списка URL пользователя
 func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Получаем userID из контекста
-	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
-	if !ok {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if _, ok := r.Context().Value(middleware.UserIDKey).(string); !ok {
+		h.logger.Error("user ID not found in context")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// Получаем URL пользователя
-	urls, err := h.service.GetUserURLs(r.Context(), userID)
+	urls, err := h.service.GetUserURLs(r.Context())
 	if err != nil {
-		h.logger.Error("Error getting user URLs", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		h.logger.Error("failed to get user URLs", zap.Error(err))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Если у пользователя нет URL, возвращаем 204
 	if len(urls) == 0 {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// Формируем полные URL
-	for i := range urls {
-		urls[i].ShortURL = h.cfg.BaseURL + "/" + urls[i].ShortURL
+	response := make([]map[string]string, len(urls))
+	for i, url := range urls {
+		response[i] = map[string]string{
+			"short_url":    url.ShortURL,
+			"original_url": url.OriginalURL,
+		}
 	}
 
-	// Отправляем ответ
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(urls); err != nil {
-		h.logger.Error("Error encoding response", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("failed to encode response", zap.Error(err))
 		return
 	}
 }

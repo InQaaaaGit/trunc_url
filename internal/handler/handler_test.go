@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,220 +21,129 @@ import (
 type mockURLService struct {
 	createShortURLFunc       func(ctx context.Context, originalURL string) (string, error)
 	getOriginalURLFunc       func(ctx context.Context, shortURL string) (string, error)
-	createShortURLsBatchFunc func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
-	getStorageFunc           func() storage.URLStorage
-	checkConnectionFunc      func(ctx context.Context) error
-	urls                     map[string]string
-	userURLs                 map[string][]models.UserURL
-	shouldFail               bool
-	shouldConflict           bool
+	getUserURLsFunc          func(ctx context.Context) ([]models.UserURL, error)
+	createShortURLsBatchFunc func(ctx context.Context, batch []service.URLBatchItem) ([]service.URLBatchResult, error)
+	PingFunc                 func(ctx context.Context) error
 }
 
 func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
 	if m.createShortURLFunc != nil {
 		return m.createShortURLFunc(ctx, originalURL)
 	}
-	return "", errors.New("not implemented")
+	return "", nil
 }
 
 func (m *mockURLService) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
 	if m.getOriginalURLFunc != nil {
 		return m.getOriginalURLFunc(ctx, shortURL)
 	}
-	return "", errors.New("not implemented")
+	return "", nil
 }
 
-func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
+func (m *mockURLService) GetUserURLs(ctx context.Context) ([]models.UserURL, error) {
+	if m.getUserURLsFunc != nil {
+		return m.getUserURLsFunc(ctx)
+	}
+	return nil, nil
+}
+
+func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []service.URLBatchItem) ([]service.URLBatchResult, error) {
 	if m.createShortURLsBatchFunc != nil {
 		return m.createShortURLsBatchFunc(ctx, batch)
 	}
-	return nil, errors.New("not implemented")
+	return nil, nil
 }
 
-func (m *mockURLService) GetStorage() storage.URLStorage {
-	if m.getStorageFunc != nil {
-		return m.getStorageFunc()
+func (m *mockURLService) Ping(ctx context.Context) error {
+	if m.PingFunc != nil {
+		return m.PingFunc(ctx)
 	}
 	return nil
-}
-
-func (m *mockURLService) CheckConnection(ctx context.Context) error {
-	if m.checkConnectionFunc != nil {
-		return m.checkConnectionFunc(ctx)
-	}
-	return errors.New("not implemented")
-}
-
-// GetUserURLs реализует метод интерфейса URLService
-func (m *mockURLService) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	if m.shouldFail {
-		return nil, fmt.Errorf("mock error")
-	}
-	return m.userURLs[userID], nil
-}
-
-// Save реализует метод интерфейса URLService
-func (m *mockURLService) Save(ctx context.Context, shortURL, originalURL string) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
-	}
-	if m.shouldConflict {
-		return storage.ErrOriginalURLConflict
-	}
-	m.urls[shortURL] = originalURL
-	return nil
-}
-
-// SaveBatch реализует метод интерфейса URLService
-func (m *mockURLService) SaveBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
-	if m.shouldFail {
-		return nil, fmt.Errorf("mock error")
-	}
-	if m.shouldConflict {
-		return nil, storage.ErrOriginalURLConflict
-	}
-	resp := make([]models.BatchResponseEntry, len(batch))
-	for i, entry := range batch {
-		shortURL := fmt.Sprintf("short_%d", i)
-		m.urls[shortURL] = entry.OriginalURL
-		resp[i] = models.BatchResponseEntry{
-			CorrelationID: entry.CorrelationID,
-			ShortURL:      shortURL,
-		}
-	}
-	return resp, nil
 }
 
 // mockStorage реализует интерфейс storage.URLStorage для тестов
 type mockStorage struct {
-	saveFunc                  func(ctx context.Context, shortURL, originalURL string) error
-	getFunc                   func(ctx context.Context, shortURL string) (string, error)
-	saveBatchFunc             func(ctx context.Context, batch []storage.BatchEntry) error
-	getShortURLByOriginalFunc func(ctx context.Context, originalURL string) (string, error)
-	urls                      map[string]string
-	userURLs                  map[string][]models.UserURL
-	shouldFail                bool
-	shouldConflict            bool
+	storage.URLStorage
+	saveURLFunc         func(ctx context.Context, shortURL, originalURL string) error
+	getOriginalURLFunc  func(ctx context.Context, shortURL string) (string, error)
+	getShortURLFunc     func(ctx context.Context, originalURL string) (string, error)
+	getUserURLsFunc     func(ctx context.Context, userID string) ([]models.UserURL, error)
+	checkConnectionFunc func(ctx context.Context) error
+	closeFunc           func() error
 }
 
-func (m *mockStorage) Save(ctx context.Context, shortURL, originalURL string) error {
-	if m.saveFunc != nil {
-		return m.saveFunc(ctx, shortURL, originalURL)
+func (m *mockStorage) SaveURL(ctx context.Context, shortURL, originalURL string) error {
+	if m.saveURLFunc != nil {
+		return m.saveURLFunc(ctx, shortURL, originalURL)
 	}
-	return errors.New("not implemented")
+	return nil
 }
 
-func (m *mockStorage) Get(ctx context.Context, shortURL string) (string, error) {
-	if m.getFunc != nil {
-		return m.getFunc(ctx, shortURL)
+func (m *mockStorage) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
+	if m.getOriginalURLFunc != nil {
+		return m.getOriginalURLFunc(ctx, shortURL)
 	}
-	return "", errors.New("not implemented")
+	return "", nil
 }
 
-func (m *mockStorage) SaveBatch(ctx context.Context, batch []storage.BatchEntry) error {
-	if m.saveBatchFunc != nil {
-		return m.saveBatchFunc(ctx, batch)
+func (m *mockStorage) GetShortURL(ctx context.Context, originalURL string) (string, error) {
+	if m.getShortURLFunc != nil {
+		return m.getShortURLFunc(ctx, originalURL)
 	}
-	return errors.New("not implemented")
+	return "", nil
 }
 
-func (m *mockStorage) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
-	if m.getShortURLByOriginalFunc != nil {
-		return m.getShortURLByOriginalFunc(ctx, originalURL)
-	}
-	return "", errors.New("not implemented")
-}
-
-// GetUserURLs реализует метод интерфейса URLStorage
 func (m *mockStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	if m.shouldFail {
-		return nil, fmt.Errorf("mock error")
+	if m.getUserURLsFunc != nil {
+		return m.getUserURLsFunc(ctx, userID)
 	}
-	return m.userURLs[userID], nil
+	return nil, nil
 }
 
-// CheckConnection реализует метод интерфейса URLStorage
 func (m *mockStorage) CheckConnection(ctx context.Context) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
+	if m.checkConnectionFunc != nil {
+		return m.checkConnectionFunc(ctx)
 	}
 	return nil
 }
 
-// SaveUserURL реализует метод интерфейса URLStorage
-func (m *mockStorage) SaveUserURL(ctx context.Context, userID, shortURL, originalURL string) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
+func (m *mockStorage) Close() error {
+	if m.closeFunc != nil {
+		return m.closeFunc()
 	}
-	if m.shouldConflict {
-		return storage.ErrOriginalURLConflict
-	}
-	m.urls[shortURL] = originalURL
-	m.userURLs[userID] = append(m.userURLs[userID], models.UserURL{
-		ShortURL:    shortURL,
-		OriginalURL: originalURL,
-	})
 	return nil
 }
 
-// mockDatabaseChecker реализует DatabaseChecker для тестов
+// mockDatabaseChecker реализует интерфейс storage.URLStorage для тестов
 type mockDatabaseChecker struct {
-	shouldFail bool
+	storage.URLStorage
+	checkConnectionFunc func(ctx context.Context) error
 }
 
-// Save реализует метод интерфейса URLStorage
-func (m *mockDatabaseChecker) Save(ctx context.Context, shortURL, originalURL string) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
-	}
+func (m *mockDatabaseChecker) SaveURL(ctx context.Context, shortURL, originalURL string) error {
 	return nil
 }
 
-// Get реализует метод интерфейса URLStorage
-func (m *mockDatabaseChecker) Get(ctx context.Context, shortURL string) (string, error) {
-	if m.shouldFail {
-		return "", fmt.Errorf("mock error")
-	}
-	return "", storage.ErrURLNotFound
+func (m *mockDatabaseChecker) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
+	return "", nil
 }
 
-// SaveBatch реализует метод интерфейса URLStorage
-func (m *mockDatabaseChecker) SaveBatch(ctx context.Context, batch []storage.BatchEntry) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
-	}
-	return nil
+func (m *mockDatabaseChecker) GetShortURL(ctx context.Context, originalURL string) (string, error) {
+	return "", nil
 }
 
-// GetShortURLByOriginal реализует метод интерфейса URLStorage
-func (m *mockDatabaseChecker) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
-	if m.shouldFail {
-		return "", fmt.Errorf("mock error")
-	}
-	return "", storage.ErrURLNotFound
-}
-
-// SaveUserURL реализует метод интерфейса URLStorage
-func (m *mockDatabaseChecker) SaveUserURL(ctx context.Context, userID, shortURL, originalURL string) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
-	}
-	return nil
-}
-
-// GetUserURLs реализует метод интерфейса URLStorage
 func (m *mockDatabaseChecker) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	if m.shouldFail {
-		return nil, fmt.Errorf("mock error")
-	}
-	return []models.UserURL{}, nil
+	return nil, nil
 }
 
-// CheckConnection реализует метод интерфейса DatabaseChecker
 func (m *mockDatabaseChecker) CheckConnection(ctx context.Context) error {
-	if m.shouldFail {
-		return fmt.Errorf("mock error")
+	if m.checkConnectionFunc != nil {
+		return m.checkConnectionFunc(ctx)
 	}
+	return nil
+}
+
+func (m *mockDatabaseChecker) Close() error {
 	return nil
 }
 
@@ -410,7 +318,7 @@ func TestHandlePing(t *testing.T) {
 			name:   "Valid ping",
 			method: http.MethodGet,
 			mockService: &mockURLService{
-				checkConnectionFunc: func(ctx context.Context) error {
+				PingFunc: func(ctx context.Context) error {
 					return nil
 				},
 			},
@@ -428,7 +336,7 @@ func TestHandlePing(t *testing.T) {
 			name:   "Connection error",
 			method: http.MethodGet,
 			mockService: &mockURLService{
-				checkConnectionFunc: func(ctx context.Context) error {
+				PingFunc: func(ctx context.Context) error {
 					return errors.New("connection error")
 				},
 			},

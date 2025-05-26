@@ -35,18 +35,21 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	handler := handler.NewHandler(service, cfg, logger)
 
-	return &App{
+	app := &App{
 		config:  cfg,
 		router:  chi.NewRouter(),
 		logger:  logger,
 		handler: handler,
-	}, nil
+	}
+
+	// Настраиваем маршруты сразу при создании
+	app.setupRoutes()
+
+	return app, nil
 }
 
 // Run запускает приложение
 func (a *App) Run() error {
-	a.setupRoutes()
-
 	server := &http.Server{
 		Addr:         a.config.ServerAddress,
 		Handler:      a.router,
@@ -65,7 +68,7 @@ func (a *App) setupRoutes() {
 	a.router.Use(a.handler.WithGzip)
 	a.router.Use(middleware.WithAuth)
 
-	// Routes
+	// Маршруты
 	a.router.Post("/", a.handler.HandleCreateURL)
 	a.router.Get("/{id}", a.handler.HandleRedirect)
 	a.router.Post("/api/shorten", a.handler.HandleShortenURL)
@@ -83,7 +86,8 @@ func (a *App) Configure() error {
 	}
 	a.handler = handler.NewHandler(urlService, a.config, a.logger)
 
-	// Настраиваем маршруты
+	// Пересоздаем роутер и настраиваем маршруты заново
+	a.router = chi.NewRouter()
 	a.setupRoutes()
 
 	return nil
@@ -98,4 +102,9 @@ func (a *App) GetServer() *http.Server {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// Router возвращает HTTP роутер приложения
+func (a *App) Router() http.Handler {
+	return a.router
 }

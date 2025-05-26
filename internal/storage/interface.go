@@ -15,28 +15,32 @@ type BatchEntry struct {
 
 // URLStorage определяет интерфейс для хранения URL
 type URLStorage interface {
-	// Save сохраняет URL в хранилище
-	Save(ctx context.Context, shortURL, originalURL string) error
+	// SaveURL сохраняет пару короткий URL - оригинальный URL
+	SaveURL(ctx context.Context, shortURL, originalURL string) error
 
-	// Get получает оригинальный URL по короткому
-	Get(ctx context.Context, shortURL string) (string, error)
+	// GetOriginalURL возвращает оригинальный URL по короткому URL
+	GetOriginalURL(ctx context.Context, shortURL string) (string, error)
 
-	// GetShortURLByOriginal получает короткий URL по оригинальному
-	// Возвращает ErrURLNotFound, если оригинальный URL не найден.
-	GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error)
+	// GetShortURL возвращает короткий URL по оригинальному URL
+	GetShortURL(ctx context.Context, originalURL string) (string, error)
 
-	// SaveBatch сохраняет пакет URL
-	SaveBatch(ctx context.Context, batch []BatchEntry) error
+	// GetUserURLs возвращает список URL пользователя
+	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
 
-	// CheckConnection проверяет соединение с базой данных
+	// CheckConnection проверяет соединение с хранилищем
 	CheckConnection(ctx context.Context) error
 
-	// Новые методы для работы с пользователями
-	SaveUserURL(ctx context.Context, userID, shortURL, originalURL string) error
-	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	// Close закрывает соединение с хранилищем
+	Close() error
 }
 
-// DatabaseChecker интерфейс для проверки соединения с базой данных
+// UserURL представляет URL пользователя в хранилище
+type UserURL struct {
+	ShortURL    string
+	OriginalURL string
+}
+
+// DatabaseChecker определяет интерфейс для проверки соединения с базой данных
 type DatabaseChecker interface {
 	// CheckConnection проверяет соединение с базой данных
 	CheckConnection(ctx context.Context) error

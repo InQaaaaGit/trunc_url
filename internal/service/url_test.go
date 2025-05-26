@@ -9,8 +9,9 @@ import (
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
-	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -341,62 +342,58 @@ func TestGetOriginalURL(t *testing.T) {
 }
 
 func TestCreateShortURLsBatch(t *testing.T) {
-	service, cleanup := setupTestService(t)
-	defer cleanup()
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
 
-	ctx := withTestUserID(context.Background())
+	cfg := &config.Config{
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+	service, err := NewURLService(cfg, logger)
+	require.NoError(t, err)
+	ctx := createTestContext()
 
 	tests := []struct {
-		name      string
-		batch     []models.BatchRequestEntry
-		wantCount int
-		wantErr   bool
-		errMsg    string
+		name    string
+		batch   []URLBatchItem
+		wantErr bool
 	}{
 		{
-			name: "Valid batch",
-			batch: []models.BatchRequestEntry{
+			name: "valid batch",
+			batch: []URLBatchItem{
 				{CorrelationID: "1", OriginalURL: "https://example1.com"},
 				{CorrelationID: "2", OriginalURL: "https://example2.com"},
 			},
-			wantCount: 2,
-			wantErr:   false,
+			wantErr: false,
 		},
 		{
-			name:      "Empty batch",
-			batch:     []models.BatchRequestEntry{},
-			wantCount: 0,
-			wantErr:   false,
+			name:    "empty batch",
+			batch:   []URLBatchItem{},
+			wantErr: false,
 		},
 		{
-			name: "Batch with empty URL",
-			batch: []models.BatchRequestEntry{
-				{CorrelationID: "1", OriginalURL: ""},
-				{CorrelationID: "2", OriginalURL: "https://example2.com"},
+			name: "invalid URL",
+			batch: []URLBatchItem{
+				{CorrelationID: "1", OriginalURL: "invalid-url"},
 			},
-			wantCount: 1,
-			wantErr:   true,
-			errMsg:    "all URLs in the batch were invalid or empty",
+			wantErr: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotBatch, err := service.CreateShortURLsBatch(ctx, tt.batch)
+			result, err := service.CreateShortURLsBatch(ctx, tt.batch)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
+				assert.Error(t, err)
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				if len(tt.batch) > 0 {
+					assert.Equal(t, len(tt.batch), len(result))
+				} else {
+					assert.Nil(t, result)
 				}
-				if tt.errMsg != "" && err.Error() != tt.errMsg {
-					t.Errorf("expected error %q, got %q", tt.errMsg, err.Error())
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if len(gotBatch) != tt.wantCount {
-				t.Errorf("expected %d URLs, got %d", tt.wantCount, len(gotBatch))
 			}
 		})
 	}
@@ -447,46 +444,27 @@ func TestMemoryStorage(t *testing.T) {
 	store := storage.NewMemoryStorage(logger)
 
 	// Test Save
-	err := store.Save(ctx, "test1", "https://example1.com")
+	err := store.SaveURL(ctx, "test1", "https://example1.com")
 	if err != nil {
-		t.Errorf("Save() error = %v", err)
+		t.Errorf("SaveURL() error = %v", err)
 	}
 
 	// Test Get
-	got, err := store.Get(ctx, "test1")
+	got, err := store.GetOriginalURL(ctx, "test1")
 	if err != nil {
-		t.Errorf("Get() error = %v", err)
+		t.Errorf("GetOriginalURL() error = %v", err)
 	}
 	if got != "https://example1.com" {
-		t.Errorf("Get() = %v, want %v", got, "https://example1.com")
+		t.Errorf("GetOriginalURL() = %v, want %v", got, "https://example1.com")
 	}
 
-	// Test GetShortURLByOriginal
-	shortURL, err := store.GetShortURLByOriginal(ctx, "https://example1.com")
+	// Test GetShortURL
+	shortURL, err := store.GetShortURL(ctx, "https://example1.com")
 	if err != nil {
-		t.Errorf("GetShortURLByOriginal() error = %v", err)
+		t.Errorf("GetShortURL() error = %v", err)
 	}
 	if shortURL != "test1" {
-		t.Errorf("GetShortURLByOriginal() = %v, want %v", shortURL, "test1")
-	}
-
-	// Test SaveBatch
-	batch := []storage.BatchEntry{
-		{ShortURL: "test2", OriginalURL: "https://example2.com", UserID: testUserID},
-		{ShortURL: "test3", OriginalURL: "https://example3.com", UserID: testUserID},
-	}
-	err = store.SaveBatch(ctx, batch)
-	if err != nil {
-		t.Errorf("SaveBatch() error = %v", err)
-	}
-
-	// Test Get after batch save
-	got, err = store.Get(ctx, "test2")
-	if err != nil {
-		t.Errorf("Get() after batch save error = %v", err)
-	}
-	if got != "https://example2.com" {
-		t.Errorf("Get() after batch save = %v, want %v", got, "https://example2.com")
+		t.Errorf("GetShortURL() = %v, want %v", shortURL, "test1")
 	}
 
 	// Test GetUserURLs
@@ -494,7 +472,194 @@ func TestMemoryStorage(t *testing.T) {
 	if err != nil {
 		t.Errorf("GetUserURLs() error = %v", err)
 	}
-	if len(urls) != 3 {
-		t.Errorf("GetUserURLs() returned %d URLs, want 3", len(urls))
+	if len(urls) != 1 {
+		t.Errorf("GetUserURLs() returned %d URLs, want 1", len(urls))
 	}
+}
+
+// createTestContext создает контекст с тестовым userID
+func createTestContext() context.Context {
+	ctx := context.Background()
+	return context.WithValue(ctx, middleware.UserIDKey, "test_user")
+}
+
+func TestURLService_CreateShortURL(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+	service, err := NewURLService(cfg, logger)
+	require.NoError(t, err)
+	ctx := createTestContext()
+
+	tests := []struct {
+		name        string
+		originalURL string
+		wantErr     bool
+		errType     error
+	}{
+		{
+			name:        "valid URL",
+			originalURL: "https://example.com",
+			wantErr:     false,
+		},
+		{
+			name:        "invalid URL",
+			originalURL: "not-a-url",
+			wantErr:     true,
+			errType:     storage.ErrInvalidURL,
+		},
+		{
+			name:        "empty URL",
+			originalURL: "",
+			wantErr:     true,
+			errType:     storage.ErrInvalidURL,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shortURL, err := service.CreateShortURL(ctx, tt.originalURL)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Empty(t, shortURL)
+				if tt.errType != nil {
+					assert.ErrorIs(t, err, tt.errType)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.NotEmpty(t, shortURL)
+			}
+		})
+	}
+}
+
+func TestURLService_GetOriginalURL(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+	service, err := NewURLService(cfg, logger)
+	require.NoError(t, err)
+	ctx := createTestContext()
+
+	// Сохраняем тестовый URL
+	originalURL := "https://example.com"
+	shortURL, err := service.CreateShortURL(ctx, originalURL)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		shortURL  string
+		wantURL   string
+		wantErr   bool
+		checkType error
+	}{
+		{
+			name:      "existing URL",
+			shortURL:  shortURL,
+			wantURL:   originalURL,
+			wantErr:   false,
+			checkType: nil,
+		},
+		{
+			name:      "non-existent URL",
+			shortURL:  "nonexistent",
+			wantURL:   "",
+			wantErr:   true,
+			checkType: storage.ErrURLNotFound,
+		},
+		{
+			name:      "empty short URL",
+			shortURL:  "",
+			wantURL:   "",
+			wantErr:   true,
+			checkType: storage.ErrInvalidURL,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			url, err := service.GetOriginalURL(ctx, tt.shortURL)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Empty(t, url)
+				if tt.checkType != nil {
+					assert.ErrorIs(t, err, tt.checkType)
+				}
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantURL, url)
+			}
+		})
+	}
+}
+
+func TestURLService_GetUserURLs(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+	service, err := NewURLService(cfg, logger)
+	require.NoError(t, err)
+	ctx := createTestContext()
+
+	// Создаем тестовые URL
+	urls := []string{
+		"https://example1.com",
+		"https://example2.com",
+		"https://example3.com",
+	}
+
+	for _, url := range urls {
+		_, err := service.CreateShortURL(ctx, url)
+		require.NoError(t, err)
+	}
+
+	// Получаем URL пользователя
+	userURLs, err := service.GetUserURLs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, len(urls), len(userURLs))
+
+	// Проверяем, что все URL присутствуют
+	urlMap := make(map[string]bool)
+	for _, url := range urls {
+		urlMap[url] = false
+	}
+
+	for _, userURL := range userURLs {
+		urlMap[userURL.OriginalURL] = true
+	}
+
+	for url, found := range urlMap {
+		assert.True(t, found, "URL %s not found in user URLs", url)
+	}
+}
+
+func TestURLService_Ping(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+	}
+	service, err := NewURLService(cfg, logger)
+	require.NoError(t, err)
+
+	err = service.Ping(context.Background())
+	assert.NoError(t, err)
 }

@@ -4,10 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"fmt"
-	"log"
 	"net/url"
+	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
@@ -16,202 +15,145 @@ import (
 	"go.uber.org/zap"
 )
 
-// URLService defines the interface for the URL service
+// URLService определяет интерфейс для работы с URL
 type URLService interface {
+	// CreateShortURL создает короткий URL для оригинального URL
 	CreateShortURL(ctx context.Context, originalURL string) (string, error)
+	// GetOriginalURL возвращает оригинальный URL по короткому URL
 	GetOriginalURL(ctx context.Context, shortURL string) (string, error)
-	GetStorage() storage.URLStorage
-	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
-	CheckConnection(ctx context.Context) error
-	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
-	Save(ctx context.Context, shortURL, originalURL string) error
-	SaveBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	// CreateShortURLsBatch создает короткие URL для пакета оригинальных URL
+	CreateShortURLsBatch(ctx context.Context, batch []URLBatchItem) ([]URLBatchResult, error)
+	// GetUserURLs возвращает список URL пользователя
+	GetUserURLs(ctx context.Context) ([]models.UserURL, error)
+	// Ping проверяет соединение с хранилищем
+	Ping(ctx context.Context) error
 }
 
-// URLServiceImpl implements the URLService
+// UserURL представляет URL пользователя
+type UserURL struct {
+	ShortURL    string
+	OriginalURL string
+}
+
+// URLBatchItem представляет элемент пакетного запроса для создания коротких URL
+type URLBatchItem struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+// URLBatchResult представляет результат пакетного создания коротких URL
+type URLBatchResult struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
+// URLServiceImpl реализует бизнес-логику для работы с URL
 type URLServiceImpl struct {
 	storage storage.URLStorage
-	config  *config.Config
 	logger  *zap.Logger
+	config  *config.Config
 }
 
-// NewURLService creates a new instance of URLService, choosing storage
-// depending on the configuration with priority: PostgreSQL -> File -> Memory.
+// NewURLService создает новый экземпляр URLService
 func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
-	var store storage.URLStorage
+	var s storage.URLStorage
 	var err error
 
-	// 1. Try to use PostgreSQL, if DSN is specified
+	storageType := "memory" // По умолчанию используем память
 	if cfg.DatabaseDSN != "" {
-		log.Println("Using PostgreSQL storage:", cfg.DatabaseDSN)
-		store, err = storage.NewPostgresStorage(cfg.DatabaseDSN, logger)
-		if err != nil {
-			// Log the error but don't exit, as we can switch to file storage
-			log.Printf("PostgreSQL storage initialization error: %v. Switching to file storage.", err)
-		} else {
-			// Successfully created PostgresStorage, use it
-			return &URLServiceImpl{
-				storage: store,
-				config:  cfg,
-				logger:  logger,
-			}, nil
-		}
+		storageType = "postgres"
+	} else if cfg.FileStoragePath != "" {
+		storageType = "file"
 	}
 
-	// 2. Try to use File Storage, if path is specified and Postgres failed or not specified
-	if cfg.FileStoragePath != "" {
-		log.Println("Using file storage:", cfg.FileStoragePath)
-		store, err = storage.NewFileStorage(cfg.FileStoragePath, logger)
-		if err != nil {
-			// Log the error but don't exit, as we can switch to in-memory storage
-			log.Printf("File storage initialization error: %v. Switching to in-memory storage.", err)
-		} else {
-			// Successfully created FileStorage, use it
-			return &URLServiceImpl{
-				storage: store,
-				config:  cfg,
-				logger:  logger,
-			}, nil
-		}
+	switch storageType {
+	case "memory":
+		s = storage.NewMemoryStorage(logger)
+	case "file":
+		s, err = storage.NewFileStorage(cfg.FileStoragePath, logger)
+	case "postgres":
+		s, err = storage.NewPostgresStorage(context.Background(), cfg.DatabaseDSN, logger)
+	default:
+		return nil, fmt.Errorf("unsupported storage type: %s", storageType)
 	}
 
-	// 3. Use in-memory storage as a fallback option
-	log.Println("Using in-memory storage.")
-	store = storage.NewMemoryStorage(logger) // Передаем логгер в конструктор
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize storage: %w", err)
+	}
 
 	return &URLServiceImpl{
-		storage: store,
-		config:  cfg,
+		storage: s,
 		logger:  logger,
-	}, nil // There should be no errors here, as MemoryStorage always succeeds
+		config:  cfg,
+	}, nil
 }
 
-// CreateShortURL создает короткий URL из оригинального
+// CreateShortURL создает короткий URL для оригинального URL
 func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
-	if originalURL == "" {
-		return "", fmt.Errorf("empty URL")
-	}
-
-	// Проверяем формат URL
-	if _, err := url.ParseRequestURI(originalURL); err != nil {
+	// Проверяем, что URL валидный
+	if !isValidURL(originalURL) {
 		return "", storage.ErrInvalidURL
 	}
 
-	// Получаем userID из контекста
-	userID, ok := ctx.Value(middleware.UserIDKey).(string)
-	if !ok {
-		return "", fmt.Errorf("user_id not found in context")
-	}
-
-	// Проверяем, существует ли уже такой URL
-	if shortURL, err := s.storage.GetShortURLByOriginal(ctx, originalURL); err == nil {
-		return shortURL, storage.ErrOriginalURLConflict
-	}
-
 	// Генерируем короткий URL
-	hash := sha256.Sum256([]byte(originalURL))
-	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
+	shortURL := generateShortURL(originalURL)
 
-	// Сохраняем URL с привязкой к пользователю
-	if err := s.storage.SaveUserURL(ctx, userID, shortURL, originalURL); err != nil {
-		return "", fmt.Errorf("error saving URL: %w", err)
+	// Сохраняем URL
+	if err := s.storage.SaveURL(ctx, shortURL, originalURL); err != nil {
+		if err == storage.ErrURLAlreadyExists {
+			// Если URL уже существует, получаем его короткую версию
+			existingShortURL, err := s.storage.GetShortURL(ctx, originalURL)
+			if err != nil {
+				return "", fmt.Errorf("failed to get existing short URL: %w", err)
+			}
+			return existingShortURL, nil
+		}
+		return "", fmt.Errorf("failed to save URL: %w", err)
 	}
 
 	return shortURL, nil
 }
 
-// GetOriginalURL gets the original URL from the short
+// GetOriginalURL возвращает оригинальный URL по короткому URL
 func (s *URLServiceImpl) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
-	if shortURL == "" {
-		return "", fmt.Errorf("empty short URL")
-	}
-
-	originalURL, err := s.storage.Get(ctx, shortURL)
-	if err != nil {
-		if errors.Is(err, storage.ErrURLNotFound) {
-			log.Printf("URL not found for shortID: %s", shortURL)
-		} else {
-			log.Printf("Error getting URL for shortID %s: %v", shortURL, err)
-		}
-		return "", err // Return error (including ErrURLNotFound)
-	}
-	return originalURL, nil
+	return s.storage.GetOriginalURL(ctx, shortURL)
 }
 
-// CreateShortURLsBatch creates short URLs for a batch and saves them
-func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
-	if len(reqBatch) == 0 {
-		return []models.BatchResponseEntry{}, nil // Return empty slice if input is empty
-	}
-
+// GetUserURLs возвращает список URL пользователя
+func (s *URLServiceImpl) GetUserURLs(ctx context.Context) ([]models.UserURL, error) {
 	// Получаем userID из контекста
 	userID, ok := ctx.Value(middleware.UserIDKey).(string)
 	if !ok {
 		return nil, fmt.Errorf("user_id not found in context")
 	}
 
-	storageBatch := make([]storage.BatchEntry, 0, len(reqBatch))
-	respBatch := make([]models.BatchResponseEntry, 0, len(reqBatch))
+	return s.storage.GetUserURLs(ctx, userID)
+}
 
-	for _, reqEntry := range reqBatch {
-		originalURL := reqEntry.OriginalURL
-		if originalURL == "" {
-			// Skip empty URLs or return error?
-			// According to the task, it's not specified, but logically we should skip or return an error for the whole batch.
-			// For now, we'll skip and log.
-			log.Printf("Skipped empty URL in batch for correlation_id: %s", reqEntry.CorrelationID)
-			continue
-		}
-		// TODO: Add URL validation, like in CreateShortURL?
-		// _, err := url.ParseRequestURI(originalURL)
-		// if err != nil { ... }
+// CreateShortURLsBatch создает короткие URL для пакета оригинальных URL
+func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, batch []URLBatchItem) ([]URLBatchResult, error) {
+	if len(batch) == 0 {
+		return nil, nil
+	}
 
-		// Check if URL already exists
-		existingShortURL, err := s.storage.GetShortURLByOriginal(ctx, originalURL)
-		if err == nil {
-			// URL already exists, use existing short URL
-			respBatch = append(respBatch, models.BatchResponseEntry{
-				CorrelationID: reqEntry.CorrelationID,
-				ShortURL:      existingShortURL,
-			})
-			continue
+	result := make([]URLBatchResult, len(batch))
+	for i, item := range batch {
+		if !isValidURL(item.OriginalURL) {
+			return nil, storage.ErrInvalidURL
 		}
 
-		// Generate shortURL (same logic as in CreateShortURL)
-		hash := sha256.Sum256([]byte(originalURL))
-		shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
-		fullShortURL := s.config.BaseURL + "/" + shortURL // Form full URL for response
+		shortURL, err := s.CreateShortURL(ctx, item.OriginalURL)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create short URL for item %s: %w", item.CorrelationID, err)
+		}
 
-		// Add to batch for saving to storage
-		storageBatch = append(storageBatch, storage.BatchEntry{
-			ShortURL:    shortURL,
-			OriginalURL: originalURL,
-			UserID:      userID,
-		})
-
-		// Add to batch for response
-		respBatch = append(respBatch, models.BatchResponseEntry{
-			CorrelationID: reqEntry.CorrelationID,
-			ShortURL:      fullShortURL,
-		})
+		result[i] = URLBatchResult{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      shortURL,
+		}
 	}
 
-	// If after filtering empty URLs batch for storage became empty
-	if len(storageBatch) == 0 {
-		log.Println("Batch for saving is empty after processing input data.")
-		// Return empty respBatch, since no valid URLs were found
-		return []models.BatchResponseEntry{}, errors.New("all URLs in the batch were invalid or empty")
-	}
-
-	// Save entire batch to storage
-	err := s.storage.SaveBatch(ctx, storageBatch)
-	if err != nil {
-		log.Printf("Error saving URL batch: %v", err)
-		return nil, fmt.Errorf("error saving batch: %w", err) // Return error
-	}
-
-	// Return result
-	return respBatch, nil
+	return result, nil
 }
 
 // GetStorage returns the URL storage
@@ -229,11 +171,6 @@ func (s *URLServiceImpl) CheckConnection(ctx context.Context) error {
 	return nil
 }
 
-// GetUserURLs получает все URL пользователя
-func (s *URLServiceImpl) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	return s.storage.GetUserURLs(ctx, userID)
-}
-
 // Save сохраняет URL в хранилище
 func (s *URLServiceImpl) Save(ctx context.Context, shortURL, originalURL string) error {
 	// Получаем userID из контекста
@@ -242,7 +179,7 @@ func (s *URLServiceImpl) Save(ctx context.Context, shortURL, originalURL string)
 		return fmt.Errorf("user_id not found in context")
 	}
 
-	return s.storage.Save(ctx, shortURL, originalURL)
+	return s.storage.SaveURL(ctx, shortURL, originalURL)
 }
 
 // SaveBatch сохраняет пакет URL
@@ -255,4 +192,48 @@ func (s *URLServiceImpl) SaveBatch(ctx context.Context, batch []models.BatchRequ
 
 	// ... existing code ...
 	return nil, nil
+}
+
+// Ping проверяет соединение с хранилищем
+func (s *URLServiceImpl) Ping(ctx context.Context) error {
+	// Проверяем, реализует ли хранилище интерфейс DatabaseChecker
+	if checker, ok := s.storage.(storage.DatabaseChecker); ok {
+		return checker.CheckConnection(ctx)
+	}
+	// Если хранилище не поддерживает проверку соединения, считаем что оно доступно
+	return nil
+}
+
+// isValidURL проверяет, является ли строка валидным URL
+func isValidURL(rawURL string) bool {
+	// Добавляем схему, если её нет
+	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+		rawURL = "http://" + rawURL
+	}
+
+	// Парсим URL
+	u, err := url.ParseRequestURI(rawURL)
+	if err != nil {
+		return false
+	}
+
+	// Проверяем, что есть хост
+	return u.Host != ""
+}
+
+// generateShortURL генерирует короткий URL на основе оригинального URL
+func generateShortURL(originalURL string) string {
+	// Создаем хеш URL
+	hash := sha256.Sum256([]byte(originalURL))
+
+	// Кодируем хеш в base64
+	encoded := base64.URLEncoding.EncodeToString(hash[:])
+
+	// Берем первые 8 символов
+	return encoded[:8]
+}
+
+// Close закрывает соединение с хранилищем
+func (s *URLServiceImpl) Close() error {
+	return s.storage.Close()
 }

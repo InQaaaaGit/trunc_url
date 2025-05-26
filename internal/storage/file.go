@@ -20,78 +20,64 @@ type URLRecord struct {
 	UserID      string `json:"user_id"`
 }
 
-// FileStorage реализует URLStorage с использованием файла
+// FileStorage реализует хранение URL в файле
 type FileStorage struct {
-	filePath string
-	urls     map[string]string
-	userURLs map[string][]models.UserURL // map[userID][]UserURL
-	mutex    sync.RWMutex
-	file     *os.File
-	logger   *zap.Logger
+	file   *os.File
+	urls   map[string]string            // shortURL -> originalURL
+	users  map[string]map[string]string // userID -> map[shortURL]originalURL
+	mutex  sync.RWMutex
+	logger *zap.Logger
 }
 
 // NewFileStorage создает новый экземпляр FileStorage
 func NewFileStorage(filePath string, logger *zap.Logger) (*FileStorage, error) {
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("error opening file: %w", err)
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 
-	fs := &FileStorage{
-		filePath: filePath,
-		file:     file,
-		urls:     make(map[string]string),
-		userURLs: make(map[string][]models.UserURL),
-		logger:   logger,
+	storage := &FileStorage{
+		file:   file,
+		urls:   make(map[string]string),
+		users:  make(map[string]map[string]string),
+		logger: logger,
 	}
 
-	if err := fs.loadFromFile(); err != nil {
-		logger.Error("Error loading data from file", zap.Error(err))
+	// Загружаем данные из файла
+	if err := storage.loadFromFile(); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("failed to load data from file: %w", err)
 	}
 
-	return fs, nil
+	return storage, nil
 }
 
-// loadFromFile загружает данные из файла
-func (fs *FileStorage) loadFromFile() error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
-
-	if _, err := fs.file.Seek(0, 0); err != nil {
-		return fmt.Errorf("error seeking to file start: %w", err)
-	}
-
-	decoder := json.NewDecoder(fs.file)
-	for decoder.More() {
-		var record URLRecord
-		if err := decoder.Decode(&record); err != nil {
-			return fmt.Errorf("error decoding record: %w", err)
-		}
-		fs.urls[record.ShortURL] = record.OriginalURL
-
-		// Добавляем URL в список пользователя
-		userURL := models.UserURL{
-			ShortURL:    record.ShortURL,
-			OriginalURL: record.OriginalURL,
-		}
-		fs.userURLs[record.UserID] = append(fs.userURLs[record.UserID], userURL)
-	}
-
-	return nil
-}
-
-// Save сохраняет URL в файл
-func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+// SaveURL сохраняет пару короткий URL - оригинальный URL
+func (s *FileStorage) SaveURL(ctx context.Context, shortURL, originalURL string) error {
 	// Получаем userID из контекста
 	userID, ok := ctx.Value(middleware.UserIDKey).(string)
 	if !ok {
 		return fmt.Errorf("user_id not found in context")
 	}
 
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
-	record := URLRecord{
+	// Сохраняем URL
+	s.urls[shortURL] = originalURL
+
+	// Сохраняем связь с пользователем
+	if _, exists := s.users[userID]; !exists {
+		s.users[userID] = make(map[string]string)
+	}
+	s.users[userID][shortURL] = originalURL
+
+	// Сохраняем в файл
+	record := struct {
+		ShortURL    string `json:"short_url"`
+		OriginalURL string `json:"original_url"`
+		UserID      string `json:"user_id"`
+	}{
 		ShortURL:    shortURL,
 		OriginalURL: originalURL,
 		UserID:      userID,
@@ -99,157 +85,126 @@ func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL string) e
 
 	data, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("error marshaling URL record: %w", err)
+		return fmt.Errorf("failed to marshal record: %w", err)
 	}
 
-	if _, err := fs.file.Write(append(data, '\n')); err != nil {
-		return fmt.Errorf("error writing to file: %w", err)
-	}
-
-	fs.urls[shortURL] = originalURL
-
-	// Добавляем URL в список пользователя
-	userURL := models.UserURL{
-		ShortURL:    shortURL,
-		OriginalURL: originalURL,
-	}
-	fs.userURLs[userID] = append(fs.userURLs[userID], userURL)
-
-	return nil
-}
-
-// Get получает оригинальный URL по короткому
-func (fs *FileStorage) Get(ctx context.Context, shortURL string) (string, error) {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
-
-	if url, exists := fs.urls[shortURL]; exists {
-		return url, nil
-	}
-
-	return "", ErrURLNotFound
-}
-
-// SaveBatch сохраняет пакет URL
-func (fs *FileStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error {
-	// Получаем userID из контекста
-	userID, ok := ctx.Value(middleware.UserIDKey).(string)
-	if !ok {
-		return fmt.Errorf("user_id not found in context")
-	}
-
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
-
-	for _, entry := range batch {
-		record := URLRecord{
-			ShortURL:    entry.ShortURL,
-			OriginalURL: entry.OriginalURL,
-			UserID:      userID,
-		}
-
-		data, err := json.Marshal(record)
-		if err != nil {
-			return fmt.Errorf("error marshaling URL record: %w", err)
-		}
-
-		if _, err := fs.file.Write(append(data, '\n')); err != nil {
-			return fmt.Errorf("error writing to file: %w", err)
-		}
-
-		fs.urls[entry.ShortURL] = entry.OriginalURL
-
-		// Добавляем URL в список пользователя
-		userURL := models.UserURL{
-			ShortURL:    entry.ShortURL,
-			OriginalURL: entry.OriginalURL,
-		}
-		fs.userURLs[userID] = append(fs.userURLs[userID], userURL)
+	if _, err := s.file.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("failed to write to file: %w", err)
 	}
 
 	return nil
 }
 
-// GetShortURLByOriginal получает короткий URL по оригинальному
-func (fs *FileStorage) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
+// GetOriginalURL возвращает оригинальный URL по короткому URL
+func (s *FileStorage) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-	for short, orig := range fs.urls {
-		if orig == originalURL {
-			return short, nil
+	originalURL, exists := s.urls[shortURL]
+	if !exists {
+		return "", ErrURLNotFound
+	}
+
+	return originalURL, nil
+}
+
+// GetShortURL возвращает короткий URL по оригинальному URL
+func (s *FileStorage) GetShortURL(ctx context.Context, originalURL string) (string, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for shortURL, url := range s.urls {
+		if url == originalURL {
+			return shortURL, nil
 		}
 	}
 
 	return "", ErrURLNotFound
 }
 
-// SaveUserURL сохраняет URL пользователя
-func (fs *FileStorage) SaveUserURL(ctx context.Context, userID, shortURL, originalURL string) error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
+// GetUserURLs возвращает список URL пользователя
+func (s *FileStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-	record := URLRecord{
-		ShortURL:    shortURL,
-		OriginalURL: originalURL,
-		UserID:      userID,
+	userURLs, exists := s.users[userID]
+	if !exists {
+		return nil, nil
 	}
 
-	data, err := json.Marshal(record)
-	if err != nil {
-		return fmt.Errorf("error marshaling URL record: %w", err)
+	urls := make([]models.UserURL, 0, len(userURLs))
+	for shortURL, originalURL := range userURLs {
+		urls = append(urls, models.UserURL{
+			ShortURL:    shortURL,
+			OriginalURL: originalURL,
+		})
 	}
 
-	if _, err := fs.file.Write(append(data, '\n')); err != nil {
-		return fmt.Errorf("error writing to file: %w", err)
-	}
-
-	fs.urls[shortURL] = originalURL
-
-	// Добавляем URL в список пользователя
-	userURL := models.UserURL{
-		ShortURL:    shortURL,
-		OriginalURL: originalURL,
-	}
-	fs.userURLs[userID] = append(fs.userURLs[userID], userURL)
-
-	return nil
+	return urls, nil
 }
 
-// GetUserURLs получает все URL пользователя
-func (fs *FileStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
+// CheckConnection проверяет соединение с хранилищем
+func (s *FileStorage) CheckConnection(ctx context.Context) error {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
 
-	if urls, exists := fs.userURLs[userID]; exists {
-		return urls, nil
-	}
-
-	return []models.UserURL{}, nil
-}
-
-// CheckConnection проверяет доступность файла
-func (fs *FileStorage) CheckConnection(ctx context.Context) error {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
-
-	if fs.file == nil {
+	if s.file == nil {
 		return fmt.Errorf("file is not opened")
 	}
 
+	// Проверяем, что файл доступен для записи
+	if _, err := s.file.Write([]byte{}); err != nil {
+		return fmt.Errorf("file is not writable: %w", err)
+	}
+
 	return nil
 }
 
-// Close закрывает файл
-func (fs *FileStorage) Close() error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
+// Close закрывает соединение с хранилищем
+func (s *FileStorage) Close() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
-	if fs.file != nil {
-		if err := fs.file.Close(); err != nil {
-			return fmt.Errorf("error closing file: %w", err)
+	if s.file != nil {
+		if err := s.file.Close(); err != nil {
+			return fmt.Errorf("failed to close file: %w", err)
 		}
-		fs.file = nil
+		s.file = nil
+	}
+
+	return nil
+}
+
+// loadFromFile загружает данные из файла
+func (s *FileStorage) loadFromFile() error {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	// Перемещаем указатель в начало файла
+	if _, err := s.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("failed to seek to start of file: %w", err)
+	}
+
+	decoder := json.NewDecoder(s.file)
+	for decoder.More() {
+		var record struct {
+			ShortURL    string `json:"short_url"`
+			OriginalURL string `json:"original_url"`
+			UserID      string `json:"user_id"`
+		}
+
+		if err := decoder.Decode(&record); err != nil {
+			return fmt.Errorf("failed to decode record: %w", err)
+		}
+
+		// Загружаем URL
+		s.urls[record.ShortURL] = record.OriginalURL
+
+		// Загружаем связь с пользователем
+		if _, exists := s.users[record.UserID]; !exists {
+			s.users[record.UserID] = make(map[string]string)
+		}
+		s.users[record.UserID][record.ShortURL] = record.OriginalURL
 	}
 
 	return nil
