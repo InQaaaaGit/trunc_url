@@ -1,33 +1,37 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
-	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 )
 
 const (
 	contentTypePlain   = "text/plain"
 	contentTypeJSON    = "application/json"
-	emptyURLMessage    = "Empty URL"
+	emptyURLMessage    = "empty URL"
 	invalidURLMessage  = "Invalid URL"
 	urlNotFoundMessage = "URL not found"
 )
 
-// URLService defines the interface for working with URLs
+// URLService определяет интерфейс для работы с URL
 type URLService interface {
-	CreateShortURL(url string) (string, error)
-	GetOriginalURL(shortID string) (string, error)
-	GetStorage() interface{}
+	CreateShortURL(ctx context.Context, url string) (string, error)
+	GetOriginalURL(ctx context.Context, shortID string) (string, error)
+	GetStorage() storage.URLStorage
+	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 }
 
 type Handler struct {
@@ -36,8 +40,7 @@ type Handler struct {
 	logger  *zap.Logger
 }
 
-func NewHandler(service service.URLService, cfg *config.Config) *Handler {
-	logger, _ := zap.NewProduction()
+func NewHandler(service service.URLService, cfg *config.Config, logger *zap.Logger) *Handler {
 	return &Handler{
 		service: service,
 		cfg:     cfg,
@@ -45,6 +48,7 @@ func NewHandler(service service.URLService, cfg *config.Config) *Handler {
 	}
 }
 
+// HandleCreateURL обрабатывает POST запрос для создания короткого URL
 func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -76,7 +80,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID, err := h.service.CreateShortURL(originalURL)
+	shortID, err := h.service.CreateShortURL(r.Context(), originalURL)
 	shortURL := h.cfg.BaseURL + "/" + shortID
 
 	if err != nil {
@@ -89,51 +93,45 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-
-		h.logger.Error("Error in service when creating URL", zap.Error(err))
+		h.logger.Error("Error creating short URL", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info("Short URL created", zap.String("url", shortURL))
 	w.Header().Set("Content-Type", contentTypePlain)
 	w.WriteHeader(http.StatusCreated)
 	if _, err := w.Write([]byte(shortURL)); err != nil {
 		h.logger.Error("Error writing response", zap.Error(err))
-		return
 	}
 }
 
+// HandleRedirect обрабатывает GET запрос для перенаправления по короткому URL
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
-	h.logger.Info("Request received", zap.String("method", r.Method), zap.String("path", r.URL.Path))
-
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Get shortID from URL path or parameter
-	shortID := chi.URLParam(r, "shortID")
+	shortID := strings.Trim(r.URL.Path, "/")
 	if shortID == "" {
-		shortID = strings.TrimPrefix(r.URL.Path, "/")
-	}
-	h.logger.Info("Extracted shortID", zap.String("shortID", shortID))
-
-	if shortID == "" {
-		h.logger.Warn("Empty shortID")
-		http.Error(w, invalidURLMessage, http.StatusBadRequest)
+		http.Error(w, "Empty shortID", http.StatusBadRequest)
 		return
 	}
 
-	h.logger.Info("Attempting to get original URL", zap.String("shortID", shortID))
-	originalURL, err := h.service.GetOriginalURL(shortID)
+	h.logger.Info("Attempting to get original URL", zap.String("short_id", shortID))
+
+	originalURL, err := h.service.GetOriginalURL(r.Context(), shortID)
 	if err != nil {
-		h.logger.Warn("URL not found", zap.String("shortID", shortID), zap.Error(err))
-		http.Error(w, urlNotFoundMessage, http.StatusNotFound)
+		if errors.Is(err, storage.ErrURLNotFound) {
+			http.Error(w, urlNotFoundMessage, http.StatusBadRequest)
+			return
+		}
+		h.logger.Error("Error getting original URL", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info("Setting Location header", zap.String("url", originalURL))
+	h.logger.Info("Setting Location header", zap.String("location", originalURL))
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -146,6 +144,7 @@ type ShortenResponse struct {
 	Result string `json:"result"`
 }
 
+// HandleShortenURL обрабатывает POST запрос для создания короткого URL в формате JSON
 func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -174,7 +173,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortID, err := h.service.CreateShortURL(req.URL)
+	shortID, err := h.service.CreateShortURL(r.Context(), req.URL)
 	shortURL := h.cfg.BaseURL + "/" + shortID
 	response := ShortenResponse{
 		Result: shortURL,
@@ -191,43 +190,32 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		h.logger.Error("Error in service when creating URL in /api/shorten", zap.Error(err))
+		h.logger.Error("Error creating short URL in /api/shorten", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	h.logger.Info("Short URL created", zap.String("url", shortURL))
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		h.logger.Error("Error writing JSON response", zap.Error(err))
-		return
 	}
 }
 
-// HandleShortenBatch processes requests for batch shortening URLs
+// HandleShortenBatch обрабатывает POST запрос для пакетного создания коротких URL
 func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Check Content-Type (must be application/json)
-	// Consider gzip compression, which is handled by middleware
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		// If Content-Type is not application/json but body was successfully decompressed by GzipMiddleware,
-		// possibly original Content-Type was application/json
-		// GzipMiddleware should have preserved original Content-Type in some header or context?
-		// Check standard Accept-Encoding - not it.
-		// The easiest way is to rely on the fact that if it's not json, Decode will return an error.
-		// Simply log warning if Content-Type is not json
-		if !strings.Contains(contentType, "application/json") {
-			h.logger.Warn("Request Content-Type is not application/json", zap.String("content-type", contentType))
-		}
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		return
 	}
 
-	var reqBatch []models.BatchRequestEntry // Use model from package models
+	var reqBatch []models.BatchRequestEntry
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Unable to read request body", http.StatusBadRequest)
@@ -240,49 +228,45 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if err := json.Unmarshal(bodyBytes, &reqBatch); err != nil {
-		h.logger.Error("Error decoding batch request JSON", zap.Error(err), zap.ByteString("body", bodyBytes))
 		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
 		return
 	}
 
-	// Check for empty batch
-	if len(reqBatch) == 0 {
-		h.logger.Info("Received empty batch request")
-		http.Error(w, "Empty batch is not allowed", http.StatusBadRequest)
-		return
-	}
-
-	// Call service method for batch processing
-	respBatch, err := h.service.CreateShortURLsBatch(reqBatch) // Pass []models.BatchRequestEntry
+	respBatch, err := h.service.CreateShortURLsBatch(r.Context(), reqBatch)
 	if err != nil {
-		h.logger.Error("Error processing batch in service", zap.Error(err))
-		// Determine which error to return to client
-		// TODO: Maybe return 400 Bad Request if error is related to invalid data in batch?
-		// For now, return 500
-		http.Error(w, "Internal server error during batch processing", http.StatusInternalServerError)
+		h.logger.Error("Error processing batch", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// If service returned empty slice (e.g., all URLs were invalid)
-	if len(respBatch) == 0 {
-		// Controversial moment: return empty array with code 201 or error 400?
-		// Return 400, as fact nothing was created.
-		http.Error(w, "All URLs in the batch were invalid or empty", http.StatusBadRequest)
-		return
-	}
-
-	// Encode response
-	respBody, err := json.Marshal(respBatch)
-	if err != nil {
-		h.logger.Error("Error encoding batch response JSON", zap.Error(err))
-		http.Error(w, "Internal server error during response encoding", http.StatusInternalServerError)
-		return
-	}
-
-	// Send response
 	w.Header().Set("Content-Type", contentTypeJSON)
-	w.WriteHeader(http.StatusCreated) // Successful creation
-	if _, err := w.Write(respBody); err != nil {
-		h.logger.Error("Error writing batch response", zap.Error(err))
+	w.WriteHeader(http.StatusCreated)
+
+	if err := json.NewEncoder(w).Encode(respBatch); err != nil {
+		h.logger.Error("Error writing response", zap.Error(err))
 	}
+}
+
+// WithLogging добавляет логирование запросов
+func (h *Handler) WithLogging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+		next.ServeHTTP(ww, r)
+
+		latency := time.Since(start)
+		h.logger.Info("Request processed",
+			zap.String("path", r.URL.Path),
+			zap.String("method", r.Method),
+			zap.Duration("latency", latency),
+			zap.Int("status", ww.Status()),
+			zap.Int("size", ww.BytesWritten()),
+		)
+	})
+}
+
+// WithGzip добавляет поддержку gzip сжатия
+func (h *Handler) WithGzip(next http.Handler) http.Handler {
+	return middleware.GzipMiddleware(next)
 }

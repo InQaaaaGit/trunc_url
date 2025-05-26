@@ -1,10 +1,13 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
-	"log"
+	"fmt"
 	"os"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 // URLRecord represents a record in the file storage
@@ -19,18 +22,28 @@ type FileStorage struct {
 	filePath string
 	urls     map[string]string
 	mutex    sync.RWMutex
+	file     *os.File
+	logger   *zap.Logger
 }
 
 // NewFileStorage creates a new FileStorage instance
-func NewFileStorage(filePath string) (*FileStorage, error) {
+func NewFileStorage(filePath string, logger *zap.Logger) (*FileStorage, error) {
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %w", err)
+	}
+
 	fs := &FileStorage{
 		filePath: filePath,
+		file:     file,
 		urls:     make(map[string]string),
+		logger:   logger,
 	}
 
 	// Load existing data from file
 	if err := fs.loadFromFile(); err != nil {
-		return nil, err
+		logger.Error("Error loading data from file", zap.Error(err))
+		// Не возвращаем ошибку, так как файл может быть пустым
 	}
 
 	return fs, nil
@@ -38,17 +51,19 @@ func NewFileStorage(filePath string) (*FileStorage, error) {
 
 // loadFromFile loads data from the file
 func (fs *FileStorage) loadFromFile() error {
-	file, err := os.OpenFile(fs.filePath, os.O_RDONLY|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
 
-	decoder := json.NewDecoder(file)
+	// Перемещаем указатель в начало файла
+	if _, err := fs.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("error seeking to file start: %w", err)
+	}
+
+	decoder := json.NewDecoder(fs.file)
 	for decoder.More() {
 		var record URLRecord
 		if err := decoder.Decode(&record); err != nil {
-			return err
+			return fmt.Errorf("error decoding record: %w", err)
 		}
 		fs.urls[record.ShortURL] = record.OriginalURL
 	}
@@ -56,87 +71,104 @@ func (fs *FileStorage) loadFromFile() error {
 	return nil
 }
 
-// saveToFile saves data to the file
-func (fs *FileStorage) saveToFile() error {
-	file, err := os.OpenFile(fs.filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
+// Save сохраняет URL в файл
+func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
 
-	encoder := json.NewEncoder(file)
-	for shortURL, originalURL := range fs.urls {
+	record := URLRecord{
+		ShortURL:    shortURL,
+		OriginalURL: originalURL,
+	}
+
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("error marshaling URL record: %w", err)
+	}
+
+	if _, err := fs.file.Write(append(data, '\n')); err != nil {
+		return fmt.Errorf("error writing to file: %w", err)
+	}
+
+	fs.urls[shortURL] = originalURL
+	return nil
+}
+
+// Get получает оригинальный URL по короткому
+func (fs *FileStorage) Get(ctx context.Context, shortURL string) (string, error) {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+
+	if url, exists := fs.urls[shortURL]; exists {
+		return url, nil
+	}
+
+	return "", ErrURLNotFound
+}
+
+// SaveBatch сохраняет пакет URL
+func (fs *FileStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
+	for _, entry := range batch {
 		record := URLRecord{
-			UUID:        shortURL, // Use shortURL as UUID for simplicity
-			ShortURL:    shortURL,
-			OriginalURL: originalURL,
+			ShortURL:    entry.ShortURL,
+			OriginalURL: entry.OriginalURL,
 		}
-		if err := encoder.Encode(record); err != nil {
-			return err
+
+		data, err := json.Marshal(record)
+		if err != nil {
+			return fmt.Errorf("error marshaling URL record: %w", err)
 		}
+
+		if _, err := fs.file.Write(append(data, '\n')); err != nil {
+			return fmt.Errorf("error writing to file: %w", err)
+		}
+
+		fs.urls[entry.ShortURL] = entry.OriginalURL
 	}
 
 	return nil
 }
 
-// Save saves a URL to the storage
-func (fs *FileStorage) Save(shortURL, originalURL string) error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
-
-	fs.urls[shortURL] = originalURL
-	return fs.saveToFile()
-}
-
-// Get retrieves the original URL from a short one
-func (fs *FileStorage) Get(shortURL string) (string, error) {
+// GetShortURLByOriginal получает короткий URL по оригинальному
+func (fs *FileStorage) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
-	if url, ok := fs.urls[shortURL]; ok {
-		return url, nil
-	}
-	return "", ErrURLNotFound
-}
-
-// SaveBatch saves a batch of URLs to the file storage
-func (fs *FileStorage) SaveBatch(batch []BatchEntry) error {
-	fs.mutex.Lock()
-	defer fs.mutex.Unlock()
-
-	// First, load existing data to avoid losing them
-	// (in case there were changes since the last loadFromFile)
-	// In a real application, this might be inefficient for large files
-	if err := fs.loadFromFile(); err != nil {
-		// If reading fails, it might be because the file is empty or corrupted.
-		// We'll try to continue, overwriting the file with new data.
-		// But it's better to log this.
-		log.Printf("Warning: failed to read file %s before batch write: %v", fs.filePath, err)
-		fs.urls = make(map[string]string) // Start with a clean slate
-	}
-
-	// Add new records to the map
-	for _, entry := range batch {
-		fs.urls[entry.ShortURL] = entry.OriginalURL
-	}
-
-	// Overwrite the file with updated data
-	return fs.saveToFile()
-}
-
-// GetShortURLByOriginal finds a short URL from an original one in the file
-func (fs *FileStorage) GetShortURLByOriginal(originalURL string) (string, error) {
-	fs.mutex.RLock()
-	defer fs.mutex.RUnlock()
-
-	// Reloading data before search might be inefficient,
-	// but guarantees freshness if the file could have been changed from outside.
-	// In the current implementation, this is unnecessary, as all changes go through this instance.
-	// Simply search in the current state of fs.urls
 	for short, orig := range fs.urls {
 		if orig == originalURL {
 			return short, nil
 		}
 	}
+
 	return "", ErrURLNotFound
+}
+
+// CheckConnection проверяет доступность файла
+func (fs *FileStorage) CheckConnection(ctx context.Context) error {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+
+	if fs.file == nil {
+		return fmt.Errorf("file is not open")
+	}
+
+	return nil
+}
+
+// Close закрывает файл
+func (fs *FileStorage) Close() error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
+	if fs.file != nil {
+		if err := fs.file.Close(); err != nil {
+			return fmt.Errorf("error closing file: %w", err)
+		}
+		fs.file = nil
+	}
+
+	return nil
 }

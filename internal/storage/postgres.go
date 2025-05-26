@@ -8,16 +8,18 @@ import (
 	"log"
 
 	"github.com/lib/pq" // Используем pq для проверки ошибки
+	"go.uber.org/zap"
 )
 
 // PostgresStorage реализует URLStorage с использованием PostgreSQL
 type PostgresStorage struct {
-	db *sql.DB
+	db     *sql.DB
+	logger *zap.Logger
 	// mutex sync.RWMutex // Удаляем неиспользуемое поле
 }
 
 // NewPostgresStorage создает новый экземпляр PostgresStorage
-func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
+func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error) {
 	// Подключение к базе данных
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -50,7 +52,8 @@ func NewPostgresStorage(dsn string) (*PostgresStorage, error) {
 	}
 
 	return &PostgresStorage{
-		db: db,
+		db:     db,
+		logger: logger,
 	}, nil
 }
 
