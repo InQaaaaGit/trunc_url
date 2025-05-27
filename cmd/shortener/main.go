@@ -27,7 +27,10 @@ func main() {
 	}
 
 	// Создание и настройка приложения
-	application := app.New(cfg)
+	application, err := app.NewApp(cfg)
+	if err != nil {
+		logger.Fatal("Ошибка создания приложения", zap.Error(err))
+	}
 	if err := application.Configure(); err != nil {
 		logger.Fatal("Ошибка конфигурации приложения", zap.Error(err))
 	}
