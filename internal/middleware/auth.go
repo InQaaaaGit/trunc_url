@@ -28,29 +28,8 @@ func WithAuth(next http.Handler) http.Handler {
 		// Получаем куку с токеном
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
-			// Если куки нет, создаем новую
-			userID := generateUserID()
-			token, err := createToken(userID)
-			if err != nil {
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-				return
-			}
-
-			// Устанавливаем куку
-			http.SetCookie(w, &http.Cookie{
-				Name:     cookieName,
-				Value:    token,
-				Path:     "/",
-				Expires:  time.Now().Add(24 * time.Hour),
-				HttpOnly: true,
-				Secure:   true,
-				SameSite: http.SameSiteLaxMode,
-			})
-
-			// Добавляем userID в контекст
-			ctx := r.Context()
-			ctx = context.WithValue(ctx, UserIDKey, userID)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			// Если куки нет, возвращаем 401
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
@@ -65,29 +44,8 @@ func WithAuth(next http.Handler) http.Handler {
 			})
 
 		if err != nil || !token.Valid {
-			// Если токен невалиден, создаем новый
-			userID := generateUserID()
-			token, err := createToken(userID)
-			if err != nil {
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
-				return
-			}
-
-			// Устанавливаем новую куку
-			http.SetCookie(w, &http.Cookie{
-				Name:     cookieName,
-				Value:    token,
-				Path:     "/",
-				Expires:  time.Now().Add(24 * time.Hour),
-				HttpOnly: true,
-				Secure:   true,
-				SameSite: http.SameSiteLaxMode,
-			})
-
-			// Добавляем userID в контекст
-			ctx := r.Context()
-			ctx = context.WithValue(ctx, UserIDKey, userID)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			// Если токен невалиден, возвращаем 401
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 
