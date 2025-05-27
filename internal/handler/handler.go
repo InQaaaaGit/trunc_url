@@ -341,7 +341,7 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 		default: // err == nil, cookie exists
 			var valid bool
 			userID, valid = middleware.ValidateUserID(cookie.Value, h.cfg.SecretKey)
-			if !valid {
+			if !valid || userID == "" {
 				userID = middleware.GenerateUserID()
 				newCookie := http.Cookie{
 					Name:  "user_id",
