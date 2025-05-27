@@ -22,6 +22,7 @@ type URLService interface {
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	CheckConnection(ctx context.Context) error
+	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
 }
 
 // URLServiceImpl implements the URLService
@@ -84,6 +85,19 @@ func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 
 // CreateShortURL creates a short URL from the original
 func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
+	userID, ok := ctx.Value("userID").(string)
+	if !ok || userID == "" {
+		// Если userID не найден в контексте, это может быть ошибкой или особенностью вызова.
+		// В зависимости от требований, можно либо возвращать ошибку, либо генерировать временный userID,
+		// либо использовать некий "общий" userID. Для текущей задачи предполагаем, что userID должен быть.
+		// Однако, если аутентификация не для всех эндпоинтов, то userID может и не быть.
+		// Пока что оставим userID пустым, если его нет, но это нужно будет уточнить.
+		// Если userID обязателен для создания URL, то здесь должна быть ошибка.
+		s.logger.Warn("UserID not found in context during CreateShortURL. URL will be saved without user association or with an empty UserID.")
+		// return "", fmt.Errorf("userID not found in context") // Раскомментировать, если userID обязателен
+		userID = "" // Или использовать специальное значение для "анонимных" URL
+	}
+
 	if originalURL == "" {
 		return "", fmt.Errorf("empty URL")
 	}
@@ -107,7 +121,7 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string)
 	hash := sha256.Sum256([]byte(originalURL))
 	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
 
-	err = s.storage.Save(ctx, shortURL, originalURL)
+	err = s.storage.Save(ctx, shortURL, originalURL, userID)
 	if err != nil {
 		// Check if the error is due to a conflict with the original URL
 		if errors.Is(err, storage.ErrOriginalURLConflict) {
@@ -193,6 +207,7 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 		storageBatch = append(storageBatch, storage.BatchEntry{
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
+			// UserID: userID, // TODO: BatchEntry и SaveBatch должны поддерживать UserID
 		})
 
 		// Add to batch for response
@@ -211,6 +226,10 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 
 	// Save entire batch to storage
 	err := s.storage.SaveBatch(ctx, storageBatch)
+	// TODO: SaveBatch должен правильно обрабатывать userID для каждой записи.
+	// Текущая реализация SaveBatch в memory и file storage использует заглушку "__batch__" или не сохраняет userID.
+	// Для postgres SaveBatch использует "ON CONFLICT DO NOTHING", что не свяжет URL с пользователем,
+	// если BatchEntry не будет содержать UserID и SQL запрос не будет обновлен.
 	if err != nil {
 		log.Printf("Error saving URL batch: %v", err)
 		return nil, fmt.Errorf("error saving batch: %w", err) // Return error
@@ -233,4 +252,22 @@ func (s *URLServiceImpl) CheckConnection(ctx context.Context) error {
 	}
 	// Если хранилище не поддерживает проверку соединения, считаем что оно доступно
 	return nil
+}
+
+// GetUserURLs получает все URL, сокращенные пользователем
+func (s *URLServiceImpl) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	userURLs, err := s.storage.GetUserURLs(ctx, userID)
+	if err != nil {
+		s.logger.Error("Error getting user URLs from storage in service", zap.String("userID", userID), zap.Error(err))
+		return nil, fmt.Errorf("service: could not retrieve URLs for user %s: %w", userID, err)
+	}
+	// Важно: здесь shortURL из хранилища это только ID. Нужно его дополнить BaseURL.
+	fullUserURLs := make([]models.UserURL, len(userURLs))
+	for i, u := range userURLs {
+		fullUserURLs[i] = models.UserURL{
+			ShortURL:    s.config.BaseURL + "/" + u.ShortURL,
+			OriginalURL: u.OriginalURL,
+		}
+	}
+	return fullUserURLs, nil
 }

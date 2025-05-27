@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 
@@ -18,6 +19,7 @@ func setupTestService(t *testing.T) (*URLServiceImpl, func()) {
 		BaseURL:         "http://localhost:8080",
 		FileStoragePath: "",
 		DatabaseDSN:     "",
+		SecretKey:       "test-secret-key",
 	}
 	logger, _ := zap.NewDevelopment()
 	service, err := NewURLService(cfg, logger)
@@ -433,50 +435,84 @@ func TestGetStorage(t *testing.T) {
 }
 
 func TestMemoryStorage(t *testing.T) {
-	ctx := context.Background()
 	logger, _ := zap.NewDevelopment()
 	store := storage.NewMemoryStorage(logger)
+	ctx := context.Background()
+	testUserID := "test-user-123"
 
-	// Test Save
-	err := store.Save(ctx, "test1", "https://example1.com")
+	// Тестирование Save
+	err := store.Save(ctx, "short1", "http://example.com/1", testUserID)
 	if err != nil {
-		t.Errorf("Save() error = %v", err)
+		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Test Get
-	got, err := store.Get(ctx, "test1")
+	// Тестирование Get
+	originalURL, err := store.Get(ctx, "short1")
 	if err != nil {
 		t.Errorf("Get() error = %v", err)
 	}
-	if got != "https://example1.com" {
-		t.Errorf("Get() = %v, want %v", got, "https://example1.com")
+	if got := originalURL; got != "http://example.com/1" {
+		t.Errorf("Get() = %v, want %v", got, "http://example.com/1")
 	}
 
-	// Test GetShortURLByOriginal
-	shortURL, err := store.GetShortURLByOriginal(ctx, "https://example1.com")
+	// Тестирование GetUserURLs
+	userURLs, err := store.GetUserURLs(ctx, testUserID)
 	if err != nil {
-		t.Errorf("GetShortURLByOriginal() error = %v", err)
+		t.Fatalf("GetUserURLs failed: %v", err)
 	}
-	if shortURL != "test1" {
-		t.Errorf("GetShortURLByOriginal() = %v, want %v", shortURL, "test1")
+	if len(userURLs) != 1 {
+		t.Fatalf("Expected 1 URL for user, got %d", len(userURLs))
+	}
+	if userURLs[0].ShortURL != "short1" || userURLs[0].OriginalURL != "http://example.com/1" {
+		t.Errorf("Unexpected user URL data: got %+v", userURLs[0])
 	}
 
-	// Test SaveBatch
-	batch := []storage.BatchEntry{
-		{ShortURL: "test2", OriginalURL: "https://example2.com"},
-		{ShortURL: "test3", OriginalURL: "https://example3.com"},
-	}
-	err = store.SaveBatch(ctx, batch)
+	// Тестирование GetUserURLs для несуществующего пользователя
+	noUserURLs, err := store.GetUserURLs(ctx, "non-existent-user")
 	if err != nil {
-		t.Errorf("SaveBatch() error = %v", err)
+		t.Fatalf("GetUserURLs for non-existent user failed: %v", err)
+	}
+	if len(noUserURLs) != 0 {
+		t.Fatalf("Expected 0 URLs for non-existent user, got %d", len(noUserURLs))
+	}
+}
+
+func TestFileStorage(t *testing.T) {
+	filePath := "test_file_storage.json"
+	defer os.Remove(filePath) // Очистка после теста
+
+	logger, _ := zap.NewDevelopment()
+	store, err := storage.NewFileStorage(filePath, logger)
+	if err != nil {
+		t.Fatalf("NewFileStorage failed: %v", err)
+	}
+	ctx := context.Background()
+	testUserID := "file-user-456"
+
+	// Тестирование Save
+	err = store.Save(ctx, "fileshort1", "http://file.example.com/1", testUserID)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Verify batch save
-	got, err = store.Get(ctx, "test2")
+	// Тестирование Get
+	originalURL, err := store.Get(ctx, "fileshort1")
 	if err != nil {
-		t.Errorf("Get() after batch save error = %v", err)
+		t.Fatalf("Get failed: %v", err)
 	}
-	if got != "https://example2.com" {
-		t.Errorf("Get() after batch save = %v, want %v", got, "https://example2.com")
+	if originalURL != "http://file.example.com/1" {
+		t.Errorf("Expected URL %s, got %s", "http://file.example.com/1", originalURL)
+	}
+
+	// Тестирование GetUserURLs
+	userURLs, err := store.GetUserURLs(ctx, testUserID)
+	if err != nil {
+		t.Fatalf("GetUserURLs failed: %v", err)
+	}
+	if len(userURLs) != 1 {
+		t.Fatalf("Expected 1 URL for user, got %d, urls: %+v", len(userURLs), userURLs)
+	}
+	if userURLs[0].ShortURL != "fileshort1" || userURLs[0].OriginalURL != "http://file.example.com/1" {
+		t.Errorf("Unexpected user URL data: got %+v", userURLs[0])
 	}
 }

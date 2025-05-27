@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"go.uber.org/zap"
 )
 
@@ -15,6 +16,7 @@ type URLRecord struct {
 	UUID        string `json:"uuid"`
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
+	UserID      string `json:"user_id,omitempty"`
 }
 
 // FileStorage implements URLStorage using a file
@@ -71,14 +73,20 @@ func (fs *FileStorage) loadFromFile() error {
 	return nil
 }
 
-// Save сохраняет URL в файл
-func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+// Save сохраняет URL в файл, связывая его с userID
+func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL, userID string) error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
+
+	// Проверка на конфликт по originalURL для данного userID
+	// Это требует изменения логики GetShortURLByOriginal или добавления новой функции,
+	// так как текущая проверяет глобально.
+	// Пока оставим как есть, но это потенциальное место для улучшения.
 
 	record := URLRecord{
 		ShortURL:    shortURL,
 		OriginalURL: originalURL,
+		UserID:      userID,
 	}
 
 	data, err := json.Marshal(record)
@@ -144,6 +152,46 @@ func (fs *FileStorage) GetShortURLByOriginal(ctx context.Context, originalURL st
 	}
 
 	return "", ErrURLNotFound
+}
+
+// GetUserURLs получает все URL, сохраненные пользователем, из файла
+func (fs *FileStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+
+	var userURLs []models.UserURL
+
+	// Необходимо переоткрыть файл для чтения с начала, так как fs.file используется для дозаписи
+	file, err := os.OpenFile(fs.filePath, os.O_RDONLY, 0644)
+	if err != nil {
+		fs.logger.Error("Error opening file for reading user URLs", zap.Error(err))
+		return nil, fmt.Errorf("error opening file for reading: %w", err)
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	for decoder.More() {
+		var record URLRecord
+		if err := decoder.Decode(&record); err != nil {
+			// Можно логировать ошибку и продолжать, если это не критично
+			fs.logger.Error("Error decoding record for user URLs", zap.Error(err))
+			continue
+		}
+		if record.UserID == userID {
+			userURLs = append(userURLs, models.UserURL{
+				ShortURL:    record.ShortURL,
+				OriginalURL: record.OriginalURL,
+			})
+		}
+	}
+
+	if len(userURLs) == 0 {
+		// Если URL-ов нет, можно вернуть пустой слайс и nil ошибку,
+		// или специальную ошибку вроде ErrNoURLsFoundForUser
+		return []models.UserURL{}, nil
+	}
+
+	return userURLs, nil
 }
 
 // CheckConnection проверяет доступность файла

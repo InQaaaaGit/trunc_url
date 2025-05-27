@@ -26,12 +26,19 @@ const (
 	urlNotFoundMessage = "URL not found"
 )
 
+// userContextKey — это пользовательский тип для ключа контекста userID.
+// Это предотвращает коллизии ключей контекста.
+type userContextKey string
+
+const userIDKey userContextKey = "userID"
+
 // URLService определяет интерфейс для работы с URL
 type URLService interface {
 	CreateShortURL(ctx context.Context, url string) (string, error)
 	GetOriginalURL(ctx context.Context, shortID string) (string, error)
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
 }
 
 type Handler struct {
@@ -290,4 +297,67 @@ func (h *Handler) WithLogging(next http.Handler) http.Handler {
 // WithGzip добавляет поддержку gzip сжатия
 func (h *Handler) WithGzip(next http.Handler) http.Handler {
 	return middleware.GzipMiddleware(next)
+}
+
+// HandleGetUserURLs обрабатывает GET запрос для получения всех URL пользователя
+func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID, ok := r.Context().Value(userIDKey).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	urls, err := h.service.GetUserURLs(r.Context(), userID)
+	if err != nil {
+		h.logger.Error("Error getting user URLs", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if len(urls) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(urls); err != nil {
+		h.logger.Error("Error writing JSON response for user URLs", zap.Error(err))
+	}
+}
+
+// AuthMiddleware проверяет аутентификационную куку
+func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("user_id")
+		var userID string
+
+		switch {
+		case err == http.ErrNoCookie:
+			userID = middleware.GenerateUserID()
+			newCookie := http.Cookie{
+				Name:  "user_id",
+				Value: middleware.SignUserID(userID, h.cfg.SecretKey),
+				Path:  "/",
+			}
+			http.SetCookie(w, &newCookie)
+		case err != nil:
+			http.Error(w, "Internal server error reading cookie", http.StatusInternalServerError)
+			return
+		default: // err == nil, cookie exists
+			var valid bool
+			userID, valid = middleware.ValidateUserID(cookie.Value, h.cfg.SecretKey)
+			if !valid {
+				userID = middleware.GenerateUserID()
+				newCookie := http.Cookie{
+					Name:  "user_id",
+					Value: middleware.SignUserID(userID, h.cfg.SecretKey),
+					Path:  "/",
+				}
+				http.SetCookie(w, &newCookie)
+			}
+		}
+		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
