@@ -9,6 +9,13 @@ import (
 	"github.com/google/uuid"
 )
 
+// UserIDContextKey — тип для ключа userID в контексте.
+// Использование собственного типа предотвращает коллизии ключей.
+type UserIDContextKey string
+
+// ContextKeyUserID — константа-ключ для userID в контексте.
+const ContextKeyUserID UserIDContextKey = "userID"
+
 // GenerateUserID генерирует уникальный ID пользователя
 func GenerateUserID() string {
 	return uuid.New().String()

@@ -10,6 +10,7 @@ import (
 	"net/url"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"go.uber.org/zap"
@@ -85,17 +86,17 @@ func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 
 // CreateShortURL creates a short URL from the original
 func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
-	userID, ok := ctx.Value("userID").(string)
+	userID, ok := ctx.Value(middleware.ContextKeyUserID).(string)
 	if !ok || userID == "" {
 		// Если userID не найден в контексте, это может быть ошибкой или особенностью вызова.
 		// В зависимости от требований, можно либо возвращать ошибку, либо генерировать временный userID,
-		// либо использовать некий "общий" userID. Для текущей задачи предполагаем, что userID должен быть.
-		// Однако, если аутентификация не для всех эндпоинтов, то userID может и не быть.
-		// Пока что оставим userID пустым, если его нет, но это нужно будет уточнить.
-		// Если userID обязателен для создания URL, то здесь должна быть ошибка.
-		s.logger.Warn("UserID not found in context during CreateShortURL. URL will be saved without user association or with an empty UserID.")
-		// return "", fmt.Errorf("userID not found in context") // Раскомментировать, если userID обязателен
-		userID = "" // Или использовать специальное значение для "анонимных" URL
+		// либо использовать некий "общий" userID.
+		// Для автотестов, если кука есть, userID должен быть.
+		// Если куки нет (первый запрос без куки), то AuthMiddleware должен был ее создать и положить userID в контекст.
+		// Таким образом, userID здесь *должен* быть, если AuthMiddleware отработал корректно.
+		s.logger.Error("UserID not found in context during CreateShortURL. This should not happen if AuthMiddleware is working.")
+		return "", fmt.Errorf("userID not found in context, authentication might have failed")
+		// userID = "" // Предыдущая логика, которая приводила к ошибке в тесте
 	}
 
 	if originalURL == "" {

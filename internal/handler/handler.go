@@ -26,12 +26,6 @@ const (
 	urlNotFoundMessage = "URL not found"
 )
 
-// userContextKey — это пользовательский тип для ключа контекста userID.
-// Это предотвращает коллизии ключей контекста.
-type userContextKey string
-
-const userIDKey userContextKey = "userID"
-
 // URLService определяет интерфейс для работы с URL
 type URLService interface {
 	CreateShortURL(ctx context.Context, url string) (string, error)
@@ -301,7 +295,7 @@ func (h *Handler) WithGzip(next http.Handler) http.Handler {
 
 // HandleGetUserURLs обрабатывает GET запрос для получения всех URL пользователя
 func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID, ok := r.Context().Value(userIDKey).(string)
+	userID, ok := r.Context().Value(middleware.ContextKeyUserID).(string)
 	if !ok || userID == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -357,7 +351,7 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 				http.SetCookie(w, &newCookie)
 			}
 		}
-		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		ctx := context.WithValue(r.Context(), middleware.ContextKeyUserID, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
