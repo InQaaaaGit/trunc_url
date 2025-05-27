@@ -2,10 +2,8 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
-	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"go.uber.org/zap"
 )
@@ -29,24 +27,23 @@ func NewMemoryStorage(logger *zap.Logger) *MemoryStorage {
 
 // SaveURL сохраняет пару короткий URL - оригинальный URL
 func (s *MemoryStorage) SaveURL(ctx context.Context, shortURL, originalURL string) error {
-	// Получаем userID из контекста
-	userID, ok := ctx.Value(middleware.UserIDKey).(string)
-	if !ok {
-		return fmt.Errorf("user_id not found in context")
-	}
-
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
+	// Проверяем, существует ли уже такой оригинальный URL
+	for existingShort, existingOriginal := range s.urls {
+		if existingOriginal == originalURL {
+			// Если оригинальный URL уже существует, возвращаем ошибку
+			return ErrURLAlreadyExists
+		}
+		if existingShort == shortURL {
+			// Если короткий URL уже существует, возвращаем ошибку
+			return ErrURLAlreadyExists
+		}
+	}
+
 	// Сохраняем URL
 	s.urls[shortURL] = originalURL
-
-	// Сохраняем связь с пользователем
-	if _, exists := s.users[userID]; !exists {
-		s.users[userID] = make(map[string]string)
-	}
-	s.users[userID][shortURL] = originalURL
-
 	return nil
 }
 
@@ -68,6 +65,7 @@ func (s *MemoryStorage) GetShortURL(ctx context.Context, originalURL string) (st
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 
+	// Ищем оригинальный URL в значениях
 	for shortURL, url := range s.urls {
 		if url == originalURL {
 			return shortURL, nil

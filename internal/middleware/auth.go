@@ -25,33 +25,64 @@ const (
 // WithAuth middleware для аутентификации пользователя
 func WithAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var userID string
+
 		// Получаем куку с токеном
 		cookie, err := r.Cookie(cookieName)
 		if err != nil {
-			// Если куки нет, возвращаем 401
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
+			// Если куки нет, создаем новую
+			userID = generateUserID()
+			token, err := createToken(userID)
+			if err != nil {
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
 
-		// Проверяем токен
-		claims := &models.UserClaims{}
-		token, err := jwt.ParseWithClaims(cookie.Value, claims,
-			func(t *jwt.Token) (interface{}, error) {
-				if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-					return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-				}
-				return []byte(secretKey), nil
+			// Устанавливаем куку
+			http.SetCookie(w, &http.Cookie{
+				Name:     cookieName,
+				Value:    token,
+				Path:     "/",
+				Expires:  time.Now().Add(24 * time.Hour),
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
 			})
+		} else {
+			// Проверяем токен
+			claims := &models.UserClaims{}
+			token, err := jwt.ParseWithClaims(cookie.Value, claims,
+				func(t *jwt.Token) (interface{}, error) {
+					if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+						return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
+					}
+					return []byte(secretKey), nil
+				})
 
-		if err != nil || !token.Valid {
-			// Если токен невалиден, возвращаем 401
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+			if err != nil || !token.Valid {
+				// Если токен невалиден, создаем новый
+				userID = generateUserID()
+				token, err := createToken(userID)
+				if err != nil {
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+					return
+				}
+
+				// Устанавливаем новую куку
+				http.SetCookie(w, &http.Cookie{
+					Name:     cookieName,
+					Value:    token,
+					Path:     "/",
+					Expires:  time.Now().Add(24 * time.Hour),
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+				})
+			} else {
+				userID = claims.UserID
+			}
 		}
 
-		// Если токен валиден, добавляем userID в контекст
-		ctx := r.Context()
-		ctx = context.WithValue(ctx, UserIDKey, claims.UserID)
+		// Добавляем userID в контекст
+		ctx := context.WithValue(r.Context(), UserIDKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
