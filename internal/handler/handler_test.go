@@ -19,16 +19,16 @@ import (
 
 // mockURLService реализует интерфейс service.URLService для тестов
 type mockURLService struct {
-	createShortURLFunc       func(ctx context.Context, originalURL string) (string, error)
+	createShortURLFunc       func(ctx context.Context, originalURL string, userID string) (string, error)
 	getOriginalURLFunc       func(ctx context.Context, shortURL string) (string, error)
 	getUserURLsFunc          func(ctx context.Context) ([]models.UserURL, error)
-	createShortURLsBatchFunc func(ctx context.Context, batch []service.URLBatchItem) ([]service.URLBatchResult, error)
+	createShortURLsBatchFunc func(ctx context.Context, batch []service.BatchRequest, userID string) ([]service.BatchResponse, error)
 	PingFunc                 func(ctx context.Context) error
 }
 
-func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
+func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string, userID string) (string, error) {
 	if m.createShortURLFunc != nil {
-		return m.createShortURLFunc(ctx, originalURL)
+		return m.createShortURLFunc(ctx, originalURL, userID)
 	}
 	return "", nil
 }
@@ -47,9 +47,9 @@ func (m *mockURLService) GetUserURLs(ctx context.Context) ([]models.UserURL, err
 	return nil, nil
 }
 
-func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []service.URLBatchItem) ([]service.URLBatchResult, error) {
+func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []service.BatchRequest, userID string) ([]service.BatchResponse, error) {
 	if m.createShortURLsBatchFunc != nil {
-		return m.createShortURLsBatchFunc(ctx, batch)
+		return m.createShortURLsBatchFunc(ctx, batch, userID)
 	}
 	return nil, nil
 }
@@ -163,7 +163,7 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType: "text/plain",
 			body:        "https://example.com",
 			mockService: &mockURLService{
-				createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
+				createShortURLFunc: func(ctx context.Context, originalURL string, userID string) (string, error) {
 					return "abc123", nil
 				},
 			},
@@ -195,7 +195,7 @@ func TestHandleCreateURL(t *testing.T) {
 			body:           "",
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "empty URL",
+			expectedBody:   "empty request body",
 		},
 		{
 			name:        "Service error",
@@ -203,7 +203,7 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType: "text/plain",
 			body:        "https://example.com",
 			mockService: &mockURLService{
-				createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
+				createShortURLFunc: func(ctx context.Context, originalURL string, userID string) (string, error) {
 					return "", errors.New("service error")
 				},
 			},

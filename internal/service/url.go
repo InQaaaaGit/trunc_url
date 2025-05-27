@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/url"
 	"path"
-	"strings"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
@@ -68,6 +67,8 @@ type URLServiceImpl struct {
 	config  *config.Config
 }
 
+var ErrUnauthorized = errors.New("user_id not found in context")
+
 // NewURLService создает новый экземпляр URLService
 func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 	var s storage.URLStorage
@@ -105,13 +106,13 @@ func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 // CreateShortURL создает короткий URL для заданного оригинального URL
 func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string, userID string) (string, error) {
 	if originalURL == "" {
-		return "", fmt.Errorf("invalid URL format")
+		return "", storage.ErrInvalidURL
 	}
 
 	// Проверяем, что URL валидный
 	parsedURL, err := url.Parse(originalURL)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return "", fmt.Errorf("invalid URL format")
+		return "", storage.ErrInvalidURL
 	}
 
 	// Генерируем короткий URL
@@ -134,27 +135,22 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string,
 
 // GetOriginalURL возвращает оригинальный URL по короткому URL
 func (s *URLServiceImpl) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
-	if shortURL == "" {
+	// Проверяем на пустой URL до любых преобразований
+	if shortURL == "" || shortURL == "." {
 		return "", fmt.Errorf("empty short URL")
 	}
 
-	// Проверяем, что короткий URL валидный
-	parsedURL, err := url.Parse(shortURL)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return "", fmt.Errorf("invalid URL format")
-	}
-
-	// Извлекаем ID из короткого URL
-	shortID := path.Base(parsedURL.Path)
-	if shortID == "" {
-		return "", fmt.Errorf("invalid URL format")
+	// Короткий URL должен быть просто идентификатором
+	shortID := path.Base(shortURL)
+	if shortID == "." {
+		return "", fmt.Errorf("empty short URL")
 	}
 
 	// Получаем оригинальный URL из хранилища
 	originalURL, err := s.storage.GetOriginalURL(ctx, shortID)
 	if err != nil {
 		if errors.Is(err, storage.ErrURLNotFound) {
-			return "", fmt.Errorf("URL not found")
+			return "", storage.ErrURLNotFound
 		}
 		return "", fmt.Errorf("failed to get original URL: %w", err)
 	}
@@ -167,7 +163,7 @@ func (s *URLServiceImpl) GetUserURLs(ctx context.Context) ([]models.UserURL, err
 	// Получаем userID из контекста
 	userID, ok := ctx.Value(middleware.UserIDKey).(string)
 	if !ok {
-		return nil, fmt.Errorf("user_id not found in context")
+		return nil, ErrUnauthorized
 	}
 
 	return s.storage.GetUserURLs(ctx, userID)
@@ -182,11 +178,11 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, batch []Batch
 	// Проверяем все URL в пакете
 	for _, req := range batch {
 		if req.OriginalURL == "" {
-			return nil, fmt.Errorf("invalid URL format")
+			return nil, storage.ErrInvalidURL
 		}
 		parsedURL, err := url.Parse(req.OriginalURL)
 		if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-			return nil, fmt.Errorf("invalid URL format")
+			return nil, storage.ErrInvalidURL
 		}
 	}
 
@@ -246,35 +242,7 @@ func (s *URLServiceImpl) SaveBatch(ctx context.Context, batch []models.BatchRequ
 
 // Ping проверяет соединение с хранилищем
 func (s *URLServiceImpl) Ping(ctx context.Context) error {
-	// Проверяем, реализует ли хранилище интерфейс DatabaseChecker
-	if checker, ok := s.storage.(storage.DatabaseChecker); ok {
-		return checker.CheckConnection(ctx)
-	}
-	// Если хранилище не поддерживает проверку соединения, считаем что оно доступно
-	return nil
-}
-
-// isValidURL проверяет, является ли строка валидным URL
-func isValidURL(rawURL string) bool {
-	// Добавляем схему, если её нет
-	if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
-		rawURL = "http://" + rawURL
-	}
-
-	// Парсим URL
-	u, err := url.ParseRequestURI(rawURL)
-	if err != nil {
-		return false
-	}
-
-	// Проверяем, что есть хост и в нем есть хотя бы одна точка
-	if u.Host == "" {
-		return false
-	}
-	if !strings.Contains(u.Host, ".") {
-		return false
-	}
-	return true
+	return s.storage.CheckConnection(ctx)
 }
 
 // generateShortURL генерирует короткий URL на основе оригинального URL

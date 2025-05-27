@@ -194,14 +194,15 @@ func TestGetOriginalURL(t *testing.T) {
 			var shortURL string
 			var err error
 
-			if tt.name == "Existing URL" {
+			switch tt.name {
+			case "Existing URL":
 				shortURL, err = service.CreateShortURL(withTestUserID(ctx), tt.originalURL, tt.userID)
 				if err != nil {
 					t.Fatalf("CreateShortURL() error = %v", err)
 				}
-			} else if tt.name == "Non-existing URL" {
+			case "Non-existing URL":
 				shortURL = "https://localhost:8080/nonexistent"
-			} else {
+			default:
 				shortURL = ""
 			}
 
@@ -365,12 +366,6 @@ func TestMemoryStorage(t *testing.T) {
 	if got != originalURL {
 		t.Errorf("GetOriginalURL() = %v, want %v", got, originalURL)
 	}
-}
-
-// createTestContext создает контекст с тестовым userID
-func createTestContext() context.Context {
-	ctx := context.Background()
-	return context.WithValue(ctx, middleware.UserIDKey, "test_user")
 }
 
 func TestURLService_CreateShortURL(t *testing.T) {

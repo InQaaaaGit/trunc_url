@@ -29,10 +29,10 @@ const (
 
 // URLService определяет интерфейс для работы с URL
 type URLService interface {
-	CreateShortURL(ctx context.Context, url string) (string, error)
+	CreateShortURL(ctx context.Context, url string, userID string) (string, error)
 	GetOriginalURL(ctx context.Context, shortID string) (string, error)
 	GetStorage() storage.URLStorage
-	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry, userID string) ([]models.BatchResponseEntry, error)
 	CheckConnection(ctx context.Context) error
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
 }
@@ -73,12 +73,13 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	if len(body) == 0 {
-		http.Error(w, "empty URL", http.StatusBadRequest)
+		http.Error(w, "empty request body", http.StatusBadRequest)
 		return
 	}
 
 	originalURL := string(body)
-	shortURL, err := h.service.CreateShortURL(r.Context(), originalURL)
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	shortURL, err := h.service.CreateShortURL(r.Context(), originalURL, userID)
 	if err != nil {
 		switch {
 		case errors.Is(err, storage.ErrInvalidURL):
@@ -158,7 +159,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		http.Error(w, "invalid content type", http.StatusBadRequest)
 		return
 	}
 
@@ -166,9 +167,13 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		URL string `json:"url"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Error("failed to decode request", zap.Error(err))
-		http.Error(w, "invalid request format", http.StatusBadRequest)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		if err == io.EOF {
+			http.Error(w, "empty request body", http.StatusBadRequest)
+		} else {
+			http.Error(w, "invalid request format", http.StatusBadRequest)
+		}
 		return
 	}
 
@@ -177,7 +182,8 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, err := h.service.CreateShortURL(r.Context(), req.URL)
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	shortURL, err := h.service.CreateShortURL(r.Context(), req.URL, userID)
 	if err != nil {
 		switch {
 		case errors.Is(err, storage.ErrInvalidURL):
@@ -215,7 +221,7 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.Contains(contentType, "application/json") {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		http.Error(w, "invalid content type", http.StatusBadRequest)
 		return
 	}
 
@@ -224,30 +230,35 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 		OriginalURL   string `json:"original_url"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		h.logger.Error("failed to decode request", zap.Error(err))
-		http.Error(w, "invalid request format", http.StatusBadRequest)
+	dec := json.NewDecoder(r.Body)
+	if err := dec.Decode(&req); err != nil {
+		if err == io.EOF {
+			http.Error(w, "empty request body", http.StatusBadRequest)
+		} else {
+			http.Error(w, "invalid request format", http.StatusBadRequest)
+		}
 		return
 	}
 
 	if len(req) == 0 {
-		http.Error(w, "empty URL", http.StatusBadRequest)
+		http.Error(w, "empty request body", http.StatusBadRequest)
 		return
 	}
 
-	batch := make([]service.URLBatchItem, len(req))
+	userID, _ := r.Context().Value(middleware.UserIDKey).(string)
+	batchReq := make([]service.BatchRequest, len(req))
 	for i, item := range req {
 		if item.OriginalURL == "" {
 			http.Error(w, "empty URL", http.StatusBadRequest)
 			return
 		}
-		batch[i] = service.URLBatchItem{
+		batchReq[i] = service.BatchRequest{
 			CorrelationID: item.CorrelationID,
 			OriginalURL:   item.OriginalURL,
 		}
 	}
 
-	results, err := h.service.CreateShortURLsBatch(r.Context(), batch)
+	results, err := h.service.CreateShortURLsBatch(r.Context(), batchReq, userID)
 	if err != nil {
 		h.logger.Error("failed to create short URLs batch", zap.Error(err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -294,7 +305,8 @@ func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := r.Context().Value(middleware.UserIDKey).(string); !ok {
+	userID, ok := r.Context().Value(middleware.UserIDKey).(string)
+	if !ok || userID == "" {
 		h.logger.Error("user ID not found in context")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
@@ -302,6 +314,10 @@ func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 
 	urls, err := h.service.GetUserURLs(r.Context())
 	if err != nil {
+		if errors.Is(err, service.ErrUnauthorized) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		h.logger.Error("failed to get user URLs", zap.Error(err))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -309,7 +325,11 @@ func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 
 	if len(urls) == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNoContent)
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write([]byte("[]")); err != nil {
+			h.logger.Error("failed to write empty response", zap.Error(err))
+			return
+		}
 		return
 	}
 
