@@ -1,29 +1,144 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
+	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+	"go.uber.org/zap"
 )
 
+// mockURLService реализует интерфейс service.URLService для тестов
 type mockURLService struct {
-	createShortURLFunc func(url string) (string, error)
-	getOriginalURLFunc func(shortID string) (string, error)
+	createShortURLFunc       func(ctx context.Context, originalURL string) (string, error)
+	getOriginalURLFunc       func(ctx context.Context, shortURL string) (string, error)
+	createShortURLsBatchFunc func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	getStorageFunc           func() storage.URLStorage
+	checkConnectionFunc      func(ctx context.Context) error
 }
 
-func (m *mockURLService) CreateShortURL(url string) (string, error) {
-	return m.createShortURLFunc(url)
+func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
+	if m.createShortURLFunc != nil {
+		return m.createShortURLFunc(ctx, originalURL)
+	}
+	return "", errors.New("not implemented")
 }
 
-func (m *mockURLService) GetOriginalURL(shortID string) (string, error) {
-	return m.getOriginalURLFunc(shortID)
+func (m *mockURLService) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
+	if m.getOriginalURLFunc != nil {
+		return m.getOriginalURLFunc(ctx, shortURL)
+	}
+	return "", errors.New("not implemented")
+}
+
+func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
+	if m.createShortURLsBatchFunc != nil {
+		return m.createShortURLsBatchFunc(ctx, batch)
+	}
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockURLService) GetStorage() storage.URLStorage {
+	if m.getStorageFunc != nil {
+		return m.getStorageFunc()
+	}
+	return nil
+}
+
+func (m *mockURLService) CheckConnection(ctx context.Context) error {
+	if m.checkConnectionFunc != nil {
+		return m.checkConnectionFunc(ctx)
+	}
+	return errors.New("not implemented")
+}
+
+// mockDatabaseChecker реализует интерфейсы storage.URLStorage и storage.DatabaseChecker для тестов
+type mockDatabaseChecker struct {
+	saveFunc                  func(ctx context.Context, shortURL, originalURL string) error
+	getFunc                   func(ctx context.Context, shortURL string) (string, error)
+	saveBatchFunc             func(ctx context.Context, batch []storage.BatchEntry) error
+	getShortURLByOriginalFunc func(ctx context.Context, originalURL string) (string, error)
+	checkConnectionFunc       func(ctx context.Context) error
+}
+
+func (m *mockDatabaseChecker) Save(ctx context.Context, shortURL, originalURL string) error {
+	if m.saveFunc != nil {
+		return m.saveFunc(ctx, shortURL, originalURL)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockDatabaseChecker) Get(ctx context.Context, shortURL string) (string, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, shortURL)
+	}
+	return "", errors.New("not implemented")
+}
+
+func (m *mockDatabaseChecker) SaveBatch(ctx context.Context, batch []storage.BatchEntry) error {
+	if m.saveBatchFunc != nil {
+		return m.saveBatchFunc(ctx, batch)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockDatabaseChecker) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
+	if m.getShortURLByOriginalFunc != nil {
+		return m.getShortURLByOriginalFunc(ctx, originalURL)
+	}
+	return "", errors.New("not implemented")
+}
+
+func (m *mockDatabaseChecker) CheckConnection(ctx context.Context) error {
+	if m.checkConnectionFunc != nil {
+		return m.checkConnectionFunc(ctx)
+	}
+	return errors.New("not implemented")
+}
+
+// mockStorage реализует интерфейс storage.URLStorage для тестов
+type mockStorage struct {
+	saveFunc                  func(ctx context.Context, shortURL, originalURL string) error
+	getFunc                   func(ctx context.Context, shortURL string) (string, error)
+	saveBatchFunc             func(ctx context.Context, batch []storage.BatchEntry) error
+	getShortURLByOriginalFunc func(ctx context.Context, originalURL string) (string, error)
+}
+
+func (m *mockStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+	if m.saveFunc != nil {
+		return m.saveFunc(ctx, shortURL, originalURL)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockStorage) Get(ctx context.Context, shortURL string) (string, error) {
+	if m.getFunc != nil {
+		return m.getFunc(ctx, shortURL)
+	}
+	return "", errors.New("not implemented")
+}
+
+func (m *mockStorage) SaveBatch(ctx context.Context, batch []storage.BatchEntry) error {
+	if m.saveBatchFunc != nil {
+		return m.saveBatchFunc(ctx, batch)
+	}
+	return errors.New("not implemented")
+}
+
+func (m *mockStorage) GetShortURLByOriginal(ctx context.Context, originalURL string) (string, error) {
+	if m.getShortURLByOriginalFunc != nil {
+		return m.getShortURLByOriginalFunc(ctx, originalURL)
+	}
+	return "", errors.New("not implemented")
 }
 
 func TestHandleCreateURL(t *testing.T) {
@@ -32,7 +147,7 @@ func TestHandleCreateURL(t *testing.T) {
 		method         string
 		contentType    string
 		body           string
-		mockService    service.URLService
+		mockService    *mockURLService
 		expectedStatus int
 		expectedBody   string
 	}{
@@ -42,7 +157,7 @@ func TestHandleCreateURL(t *testing.T) {
 			contentType: "text/plain",
 			body:        "https://example.com",
 			mockService: &mockURLService{
-				createShortURLFunc: func(url string) (string, error) {
+				createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
 					return "abc123", nil
 				},
 			},
@@ -50,22 +165,22 @@ func TestHandleCreateURL(t *testing.T) {
 			expectedBody:   "http://localhost:8080/abc123",
 		},
 		{
-			name:           "Invalid Method",
+			name:           "Invalid method",
 			method:         http.MethodGet,
 			contentType:    "text/plain",
 			body:           "https://example.com",
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusMethodNotAllowed,
-			expectedBody:   "Method not allowed\n",
+			expectedBody:   "Method not allowed",
 		},
 		{
-			name:           "Invalid Content-Type",
+			name:           "Invalid content type",
 			method:         http.MethodPost,
 			contentType:    "application/json",
 			body:           "https://example.com",
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "Invalid Content-Type\n",
+			expectedBody:   "Invalid Content-Type",
 		},
 		{
 			name:           "Empty URL",
@@ -74,40 +189,38 @@ func TestHandleCreateURL(t *testing.T) {
 			body:           "",
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "Empty URL\n",
+			expectedBody:   "empty URL",
 		},
 		{
-			name:        "Service Error",
+			name:        "Service error",
 			method:      http.MethodPost,
 			contentType: "text/plain",
 			body:        "https://example.com",
 			mockService: &mockURLService{
-				createShortURLFunc: func(url string) (string, error) {
+				createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
 					return "", errors.New("service error")
 				},
 			},
 			expectedStatus: http.StatusInternalServerError,
-			expectedBody:   "Internal server error\n",
+			expectedBody:   "Internal server error",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{BaseURL: "http://localhost:8080"}
-			h := NewHandler(tt.mockService, cfg)
+			logger, _ := zap.NewDevelopment()
+			h := NewHandler(tt.mockService, cfg, logger)
 
-			req := httptest.NewRequest(tt.method, "/", bytes.NewBufferString(tt.body))
+			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
 
 			h.HandleCreateURL(w, req)
 
-			if w.Code != tt.expectedStatus {
-				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
-			}
-
-			if w.Body.String() != tt.expectedBody {
-				t.Errorf("expected body %q, got %q", tt.expectedBody, w.Body.String())
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedBody != "" {
+				assert.Equal(t, tt.expectedBody, strings.TrimSpace(w.Body.String()))
 			}
 		})
 	}
@@ -116,16 +229,18 @@ func TestHandleCreateURL(t *testing.T) {
 func TestHandleRedirect(t *testing.T) {
 	tests := []struct {
 		name           string
-		shortID        string
-		mockService    service.URLService
+		method         string
+		shortURL       string
+		mockService    *mockURLService
 		expectedStatus int
 		expectedURL    string
 	}{
 		{
-			name:    "Valid ShortID",
-			shortID: "abc123",
+			name:     "Valid short URL",
+			method:   http.MethodGet,
+			shortURL: "abc123",
 			mockService: &mockURLService{
-				getOriginalURLFunc: func(shortID string) (string, error) {
+				getOriginalURLFunc: func(ctx context.Context, shortURL string) (string, error) {
 					return "https://example.com", nil
 				},
 			},
@@ -133,47 +248,117 @@ func TestHandleRedirect(t *testing.T) {
 			expectedURL:    "https://example.com",
 		},
 		{
-			name:           "Empty ShortID",
-			shortID:        "",
+			name:           "Invalid method",
+			method:         http.MethodPost,
+			shortURL:       "abc123",
 			mockService:    &mockURLService{},
-			expectedStatus: http.StatusBadRequest,
-			expectedURL:    "",
+			expectedStatus: http.StatusMethodNotAllowed,
 		},
 		{
-			name:    "URL Not Found",
-			shortID: "abc123",
+			name:     "URL not found",
+			method:   http.MethodGet,
+			shortURL: "nonexistent",
 			mockService: &mockURLService{
-				getOriginalURLFunc: func(shortID string) (string, error) {
-					return "", errors.New("URL not found")
+				getOriginalURLFunc: func(ctx context.Context, shortURL string) (string, error) {
+					return "", storage.ErrURLNotFound
 				},
 			},
-			expectedStatus: http.StatusNotFound,
-			expectedURL:    "",
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:     "Service error",
+			method:   http.MethodGet,
+			shortURL: "abc123",
+			mockService: &mockURLService{
+				getOriginalURLFunc: func(ctx context.Context, shortURL string) (string, error) {
+					return "", errors.New("service error")
+				},
+			},
+			expectedStatus: http.StatusInternalServerError,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := &config.Config{BaseURL: "http://localhost:8080"}
-			h := NewHandler(tt.mockService, cfg)
+			logger, _ := zap.NewDevelopment()
+			h := NewHandler(tt.mockService, cfg, logger)
 
-			req := httptest.NewRequest(http.MethodGet, "/"+tt.shortID, nil)
+			r := chi.NewRouter()
+			r.Get("/{id}", h.HandleRedirect)
+
+			req := httptest.NewRequest(tt.method, "/"+tt.shortURL, nil)
 			w := httptest.NewRecorder()
 
-			// Создаем контекст с параметром shortID
-			rctx := chi.NewRouteContext()
-			rctx.URLParams.Add("shortID", tt.shortID)
-			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			r.ServeHTTP(w, req)
 
-			h.HandleRedirect(w, req)
-
-			if w.Code != tt.expectedStatus {
-				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
-			}
-
-			if tt.expectedURL != "" && w.Header().Get("Location") != tt.expectedURL {
-				t.Errorf("expected Location header %q, got %q", tt.expectedURL, w.Header().Get("Location"))
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedURL != "" {
+				assert.Equal(t, tt.expectedURL, w.Header().Get("Location"))
 			}
 		})
 	}
 }
+
+func TestHandlePing(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		mockService    *mockURLService
+		expectedStatus int
+		expectedBody   string
+	}{
+		{
+			name:   "Valid ping",
+			method: http.MethodGet,
+			mockService: &mockURLService{
+				checkConnectionFunc: func(ctx context.Context) error {
+					return nil
+				},
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody:   "",
+		},
+		{
+			name:           "Invalid method",
+			method:         http.MethodPost,
+			mockService:    &mockURLService{},
+			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   "Method not allowed\n",
+		},
+		{
+			name:   "Connection error",
+			method: http.MethodGet,
+			mockService: &mockURLService{
+				checkConnectionFunc: func(ctx context.Context) error {
+					return errors.New("connection error")
+				},
+			},
+			expectedStatus: http.StatusGone,
+			expectedBody:   "Storage is no longer available\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{BaseURL: "http://localhost:8080"}
+			logger, _ := zap.NewDevelopment()
+			h := NewHandler(tt.mockService, cfg, logger)
+
+			req := httptest.NewRequest(tt.method, "/ping", nil)
+			w := httptest.NewRecorder()
+
+			h.HandlePing(w, req)
+
+			assert.Equal(t, tt.expectedStatus, w.Code)
+			if tt.expectedBody != "" {
+				assert.Equal(t, tt.expectedBody, w.Body.String())
+			}
+		})
+	}
+}
+
+var _ service.URLService = (*mockURLService)(nil)
+var _ storage.URLStorage = (*mockStorage)(nil)
+var _ storage.URLStorage = (*mockDatabaseChecker)(nil)
+var _ storage.DatabaseChecker = (*mockDatabaseChecker)(nil)
