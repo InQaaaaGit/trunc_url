@@ -274,7 +274,115 @@ func (s *URLServiceImpl) GetUserURLs(ctx context.Context, userID string) ([]mode
 	return fullUserURLs, nil
 }
 
-// BatchDeleteURLs deletes multiple URLs
+// BatchDeleteURLs deletes multiple URLs using fan-in pattern
 func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error {
-	return s.storage.BatchDelete(ctx, shortURLs, userID)
+	if len(shortURLs) == 0 {
+		return nil
+	}
+
+	// Если URL мало, удаляем их последовательно
+	if len(shortURLs) <= 5 {
+		return s.storage.BatchDelete(ctx, shortURLs, userID)
+	}
+
+	// Для большого количества URL используем паттерн fan-in
+	const maxWorkers = 3
+	const batchSize = 5
+
+	// Создаем канал для сбора результатов от всех worker'ов (fan-in)
+	errorChan := make(chan error, maxWorkers)
+
+	// Создаем канал для координации завершения работы
+	doneChan := make(chan struct{})
+
+	// Разбиваем URL на батчи для параллельной обработки
+	batches := make([][]string, 0)
+	for i := 0; i < len(shortURLs); i += batchSize {
+		end := i + batchSize
+		if end > len(shortURLs) {
+			end = len(shortURLs)
+		}
+		batches = append(batches, shortURLs[i:end])
+	}
+
+	// Ограничиваем количество worker'ов
+	workers := len(batches)
+	if workers > maxWorkers {
+		workers = maxWorkers
+	}
+
+	s.logger.Info("Starting parallel URL deletion",
+		zap.String("userID", userID),
+		zap.Int("totalURLs", len(shortURLs)),
+		zap.Int("batches", len(batches)),
+		zap.Int("workers", workers))
+
+	// Запускаем worker'ы для параллельной обработки батчей
+	for i := 0; i < workers; i++ {
+		go func(workerID int) {
+			defer func() {
+				doneChan <- struct{}{} // Сигнализируем о завершении worker'а
+			}()
+
+			// Каждый worker обрабатывает свою часть батчей
+			for batchIndex := workerID; batchIndex < len(batches); batchIndex += workers {
+				batch := batches[batchIndex]
+
+				s.logger.Debug("Worker processing batch",
+					zap.Int("workerID", workerID),
+					zap.Int("batchIndex", batchIndex),
+					zap.Strings("urls", batch))
+
+				// Удаляем батч URL
+				if err := s.storage.BatchDelete(ctx, batch, userID); err != nil {
+					s.logger.Error("Error deleting batch",
+						zap.Int("workerID", workerID),
+						zap.Int("batchIndex", batchIndex),
+						zap.Error(err))
+
+					// Отправляем ошибку в канал (fan-in)
+					select {
+					case errorChan <- err:
+					case <-ctx.Done():
+						return
+					}
+				} else {
+					s.logger.Debug("Batch deleted successfully",
+						zap.Int("workerID", workerID),
+						zap.Int("batchIndex", batchIndex),
+						zap.Int("count", len(batch)))
+				}
+			}
+		}(i)
+	}
+
+	// Goroutine для закрытия errorChan после завершения всех worker'ов
+	go func() {
+		workersCompleted := 0
+		for workersCompleted < workers {
+			<-doneChan
+			workersCompleted++
+		}
+		close(errorChan)
+	}()
+
+	// Собираем все ошибки из канала (fan-in consumer)
+	var errors []error
+	for err := range errorChan {
+		errors = append(errors, err)
+	}
+
+	// Если были ошибки, возвращаем первую из них
+	if len(errors) > 0 {
+		s.logger.Error("Batch deletion completed with errors",
+			zap.String("userID", userID),
+			zap.Int("errorCount", len(errors)))
+		return errors[0]
+	}
+
+	s.logger.Info("Batch deletion completed successfully",
+		zap.String("userID", userID),
+		zap.Int("totalURLs", len(shortURLs)))
+
+	return nil
 }

@@ -166,6 +166,7 @@ func (fs *FileStorage) GetUserURLs(ctx context.Context, userID string) ([]models
 	defer fs.mutex.RUnlock()
 
 	var userURLs []models.UserURL
+	seenURLs := make(map[string]bool) // Для избежания дублирования
 
 	// Необходимо переоткрыть файл для чтения с начала, так как fs.file используется для дозаписи
 	file, err := os.OpenFile(fs.filePath, os.O_RDONLY, 0644)
@@ -183,11 +184,13 @@ func (fs *FileStorage) GetUserURLs(ctx context.Context, userID string) ([]models
 			fs.logger.Error("Error decoding record for user URLs", zap.Error(err))
 			continue
 		}
-		if record.UserID == userID && !record.IsDeleted {
+		// Проверяем уникальность и добавляем только неудаленные URL
+		if record.UserID == userID && !record.IsDeleted && !seenURLs[record.ShortURL] {
 			userURLs = append(userURLs, models.UserURL{
 				ShortURL:    record.ShortURL,
 				OriginalURL: record.OriginalURL,
 			})
+			seenURLs[record.ShortURL] = true
 		}
 	}
 

@@ -510,3 +510,53 @@ func TestFileStorage(t *testing.T) {
 		t.Errorf("Unexpected user URL data: got %+v", userURLs[0])
 	}
 }
+
+func TestBatchDeleteURLsFanIn(t *testing.T) {
+	service, cleanup := setupTestService(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "test-user-fanin"
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, userID)
+
+	// Создаем много URL для тестирования fan-in паттерна
+	urlCount := 15 // Больше чем бatchSize (5), чтобы активировать параллельную обработку
+	shortURLs := make([]string, urlCount)
+
+	// Создаем URL
+	for i := 0; i < urlCount; i++ {
+		originalURL := fmt.Sprintf("https://fanin-test-%d.com", i)
+		shortURL, err := service.CreateShortURL(ctx, originalURL)
+		if err != nil {
+			t.Fatalf("Error creating short URL %d: %v", i, err)
+		}
+		shortURLs[i] = shortURL
+	}
+
+	// Проверяем что все URL созданы и доступны
+	for i, shortURL := range shortURLs {
+		_, err := service.GetOriginalURL(ctx, shortURL)
+		if err != nil {
+			t.Errorf("URL %d should exist before deletion: %v", i, err)
+		}
+	}
+
+	// Удаляем URL используя fan-in паттерн
+	err := service.BatchDeleteURLs(ctx, shortURLs, userID)
+	if err != nil {
+		t.Fatalf("BatchDeleteURLs failed: %v", err)
+	}
+
+	// Проверяем что все URL помечены как удаленные
+	for i, shortURL := range shortURLs {
+		_, err := service.GetOriginalURL(ctx, shortURL)
+		if err == nil {
+			t.Errorf("URL %d should be deleted: %s", i, shortURL)
+		}
+		if !errors.Is(err, storage.ErrURLDeleted) {
+			t.Errorf("URL %d should return ErrURLDeleted, got: %v", i, err)
+		}
+	}
+
+	t.Logf("Successfully tested fan-in pattern with %d URLs", urlCount)
+}
