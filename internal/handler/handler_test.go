@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
@@ -25,6 +28,8 @@ type mockURLService struct {
 	getStorageFunc           func() storage.URLStorage
 	checkConnectionFunc      func(ctx context.Context) error
 	getUserURLsFunc          func(ctx context.Context, userID string) ([]models.UserURL, error)
+	urls                     map[string]string
+	deletedURLs              map[string]bool
 }
 
 func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
@@ -38,7 +43,13 @@ func (m *mockURLService) GetOriginalURL(ctx context.Context, shortURL string) (s
 	if m.getOriginalURLFunc != nil {
 		return m.getOriginalURLFunc(ctx, shortURL)
 	}
-	return "", errors.New("not implemented")
+	if m.deletedURLs[shortURL] {
+		return "", storage.ErrURLDeleted
+	}
+	if url, exists := m.urls[shortURL]; exists {
+		return url, nil
+	}
+	return "", storage.ErrURLNotFound
 }
 
 func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
@@ -67,6 +78,13 @@ func (m *mockURLService) GetUserURLs(ctx context.Context, userID string) ([]mode
 		return m.getUserURLsFunc(ctx, userID)
 	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *mockURLService) BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error {
+	for _, shortURL := range shortURLs {
+		m.deletedURLs[shortURL] = true
+	}
+	return nil
 }
 
 // mockDatabaseChecker реализует интерфейсы storage.URLStorage и storage.DatabaseChecker для тестов
@@ -121,6 +139,10 @@ func (m *mockDatabaseChecker) GetUserURLs(ctx context.Context, userID string) ([
 	return nil, errors.New("not implemented")
 }
 
+func (m *mockDatabaseChecker) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
+	return nil
+}
+
 // mockStorage реализует интерфейс storage.URLStorage для тестов
 type mockStorage struct {
 	saveFunc                  func(ctx context.Context, shortURL, originalURL, userID string) error
@@ -163,6 +185,10 @@ func (m *mockStorage) GetUserURLs(ctx context.Context, userID string) ([]models.
 		return m.getUserURLsFunc(ctx, userID)
 	}
 	return nil, errors.New("not implemented")
+}
+
+func (m *mockStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
+	return nil
 }
 
 func TestHandleCreateURL(t *testing.T) {
@@ -379,6 +405,64 @@ func TestHandlePing(t *testing.T) {
 				assert.Equal(t, tt.expectedBody, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestHandleDeleteUserURLs(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{BaseURL: "http://localhost:8080"}
+
+	mockService := &mockURLService{
+		urls:        make(map[string]string),
+		deletedURLs: make(map[string]bool),
+	}
+
+	handler := NewHandler(mockService, cfg, logger)
+
+	// Создаем тестовый URL
+	mockService.urls["test123"] = "https://example.com"
+
+	// Тест успешного удаления
+	deleteRequest := models.DeleteRequest{"test123"}
+	body, _ := json.Marshal(deleteRequest)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Добавляем userID в контекст
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "user123")
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	handler.HandleDeleteUserURLs(w, req)
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("Expected status %d, got %d", http.StatusAccepted, w.Code)
+	}
+}
+
+func TestHandleRedirectDeletedURL(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{BaseURL: "http://localhost:8080"}
+
+	mockService := &mockURLService{
+		urls:        make(map[string]string),
+		deletedURLs: make(map[string]bool),
+	}
+
+	handler := NewHandler(mockService, cfg, logger)
+
+	// Создаем и удаляем URL
+	mockService.urls["test123"] = "https://example.com"
+	mockService.deletedURLs["test123"] = true
+
+	req := httptest.NewRequest(http.MethodGet, "/test123", nil)
+	w := httptest.NewRecorder()
+
+	handler.HandleRedirect(w, req)
+
+	if w.Code != http.StatusGone {
+		t.Errorf("Expected status %d for deleted URL, got %d", http.StatusGone, w.Code)
 	}
 }
 

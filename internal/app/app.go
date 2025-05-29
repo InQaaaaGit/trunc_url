@@ -71,6 +71,7 @@ func (a *App) setupRoutes() {
 	a.router.Post("/api/shorten/batch", a.handler.HandleShortenBatch)
 	a.router.Get("/ping", a.handler.HandlePing)
 	a.router.Get("/api/user/urls", a.handler.HandleGetUserURLs)
+	a.router.Delete("/api/user/urls", a.handler.HandleDeleteUserURLs)
 }
 
 // Configure настраивает все слои приложения
@@ -96,6 +97,7 @@ func (a *App) Configure() error {
 	// Добавляем хендлер для проверки доступности БД
 	a.router.Get("/ping", handler.HandlePing)
 	a.router.Get("/api/user/urls", handler.HandleGetUserURLs)
+	a.router.Delete("/api/user/urls", handler.HandleDeleteUserURLs)
 
 	return nil
 }

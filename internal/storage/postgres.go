@@ -62,6 +62,7 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 		`short_url VARCHAR(255) PRIMARY KEY,` +
 		`original_url TEXT NOT NULL,` +
 		`user_id VARCHAR(255),` +
+		`is_deleted BOOLEAN DEFAULT FALSE,` +
 		`CONSTRAINT unique_original_url_per_user UNIQUE (original_url, user_id)` +
 		`)`
 	_, err = db.ExecContext(ctx, createTableSQL)
@@ -71,6 +72,13 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 			log.Printf("Failed to close DB connection after table creation error: %v", closeErr)
 		}
 		return nil, fmt.Errorf("table creation error: %w", err)
+	}
+
+	// Добавляем поле is_deleted, если его нет (для существующих таблиц)
+	alterTableSQL := `ALTER TABLE urls ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE`
+	_, err = db.ExecContext(ctx, alterTableSQL)
+	if err != nil {
+		logger.Warn("Failed to add is_deleted column (may already exist)", zap.Error(err))
 	}
 
 	return &PostgresStorage{
@@ -102,13 +110,19 @@ func (ps *PostgresStorage) Save(ctx context.Context, shortURL, originalURL, user
 // Get получает оригинальный URL по короткому
 func (ps *PostgresStorage) Get(ctx context.Context, shortURL string) (string, error) {
 	var originalURL string
-	err := ps.db.QueryRowContext(ctx, "SELECT original_url FROM urls WHERE short_url = $1", shortURL).Scan(&originalURL)
+	var isDeleted bool
+	err := ps.db.QueryRowContext(ctx, "SELECT original_url, is_deleted FROM urls WHERE short_url = $1", shortURL).Scan(&originalURL, &isDeleted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) { // Убедимся, что используется errors.Is
 			return "", ErrURLNotFound
 		}
 		return "", fmt.Errorf("get URL error: %w", err)
 	}
+
+	if isDeleted {
+		return "", ErrURLDeleted
+	}
+
 	return originalURL, nil
 }
 
@@ -159,7 +173,7 @@ func (ps *PostgresStorage) GetShortURLByOriginal(ctx context.Context, originalUR
 
 // GetUserURLs получает все URL, сохраненные пользователем, из PostgreSQL
 func (ps *PostgresStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
-	rows, err := ps.db.QueryContext(ctx, "SELECT short_url, original_url FROM urls WHERE user_id = $1", userID)
+	rows, err := ps.db.QueryContext(ctx, "SELECT short_url, original_url FROM urls WHERE user_id = $1 AND is_deleted = FALSE", userID)
 	if err != nil {
 		return nil, fmt.Errorf("query user URLs error: %w", err)
 	}
@@ -189,4 +203,41 @@ func (ps *PostgresStorage) Close() error {
 // CheckConnection проверяет соединение с базой данных
 func (ps *PostgresStorage) CheckConnection(ctx context.Context) error {
 	return ps.db.PingContext(ctx)
+}
+
+// BatchDelete помечает URL как удаленные для указанного пользователя
+func (ps *PostgresStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
+	if len(shortURLs) == 0 {
+		return nil // Нет смысла открывать транзакцию для пустого списка
+	}
+
+	// Начинаем транзакцию
+	tx, err := ps.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("transaction start error: %w", err)
+	}
+	// Гарантируем откат транзакции в случае ошибки
+	defer tx.Rollback() //nolint:errcheck
+
+	// Подготавливаем запрос для batch update
+	stmt, err := tx.PrepareContext(ctx, "UPDATE urls SET is_deleted = TRUE WHERE short_url = $1 AND user_id = $2 AND is_deleted = FALSE")
+	if err != nil {
+		return fmt.Errorf("prepare statement error: %w", err)
+	}
+	defer stmt.Close()
+
+	// Выполняем обновление для каждого URL
+	for _, shortURL := range shortURLs {
+		_, err := stmt.ExecContext(ctx, shortURL, userID)
+		if err != nil {
+			return fmt.Errorf("batch delete error for shortURL %s: %w", shortURL, err)
+		}
+	}
+
+	// Коммитим транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("transaction commit error: %w", err)
+	}
+
+	return nil
 }

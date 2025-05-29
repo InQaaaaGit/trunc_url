@@ -9,20 +9,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// URLEntry представляет запись URL в памяти
+type URLEntry struct {
+	OriginalURL string
+	UserID      string
+	IsDeleted   bool
+}
+
 // MemoryStorage реализует URLStorage с использованием памяти
 type MemoryStorage struct {
 	mu sync.RWMutex
-	// urls map[string]string // Заменим на структуру, хранящую и UserID
-	userURLs map[string]map[string]string // map[userID]map[shortURL]originalURL
-	logger   *zap.Logger
+	// Изменяем структуру: map[shortURL]URLEntry
+	urls   map[string]URLEntry
+	logger *zap.Logger
 }
 
 // NewMemoryStorage создает новый экземпляр MemoryStorage
 func NewMemoryStorage(logger *zap.Logger) *MemoryStorage {
 	return &MemoryStorage{
-		// urls:   make(map[string]string),
-		userURLs: make(map[string]map[string]string),
-		logger:   logger,
+		urls:   make(map[string]URLEntry),
+		logger: logger,
 	}
 }
 
@@ -31,10 +37,11 @@ func (ms *MemoryStorage) Save(ctx context.Context, shortURL, originalURL, userID
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
-	if _, ok := ms.userURLs[userID]; !ok {
-		ms.userURLs[userID] = make(map[string]string)
+	ms.urls[shortURL] = URLEntry{
+		OriginalURL: originalURL,
+		UserID:      userID,
+		IsDeleted:   false,
 	}
-	ms.userURLs[userID][shortURL] = originalURL
 	return nil
 }
 
@@ -43,15 +50,16 @@ func (ms *MemoryStorage) Get(ctx context.Context, shortURL string) (string, erro
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	// Нужно пройти по всем пользователям, чтобы найти shortURL
-	// Это неэффективно, но соответствует текущей логике Get, которая не знает userID
-	for _, urlsMap := range ms.userURLs {
-		if originalURL, exists := urlsMap[shortURL]; exists {
-			return originalURL, nil
-		}
+	entry, exists := ms.urls[shortURL]
+	if !exists {
+		return "", ErrURLNotFound
 	}
 
-	return "", ErrURLNotFound
+	if entry.IsDeleted {
+		return "", ErrURLDeleted
+	}
+
+	return entry.OriginalURL, nil
 }
 
 // GetShortURLByOriginal получает короткий URL по оригинальному
@@ -61,11 +69,9 @@ func (ms *MemoryStorage) GetShortURLByOriginal(ctx context.Context, originalURL 
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	for _, urlsMap := range ms.userURLs {
-		for short, orig := range urlsMap {
-			if orig == originalURL {
-				return short, nil
-			}
+	for short, entry := range ms.urls {
+		if entry.OriginalURL == originalURL {
+			return short, nil
 		}
 	}
 
@@ -82,12 +88,13 @@ func (ms *MemoryStorage) SaveBatch(ctx context.Context, batch []BatchEntry) erro
 
 	// Используем фиктивный userID для пакетной вставки, так как интерфейс не передает его
 	const batchUserID = "__batch__"
-	if _, ok := ms.userURLs[batchUserID]; !ok {
-		ms.userURLs[batchUserID] = make(map[string]string)
-	}
 
 	for _, entry := range batch {
-		ms.userURLs[batchUserID][entry.ShortURL] = entry.OriginalURL
+		ms.urls[entry.ShortURL] = URLEntry{
+			OriginalURL: entry.OriginalURL,
+			UserID:      batchUserID,
+			IsDeleted:   false,
+		}
 	}
 
 	return nil
@@ -98,17 +105,14 @@ func (ms *MemoryStorage) GetUserURLs(ctx context.Context, userID string) ([]mode
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	userSpecificURLs, ok := ms.userURLs[userID]
-	if !ok {
-		return []models.UserURL{}, nil // Нет URL для данного пользователя
-	}
-
 	var result []models.UserURL
-	for shortURL, originalURL := range userSpecificURLs {
-		result = append(result, models.UserURL{
-			ShortURL:    shortURL, // Нужно будет формировать полный shortURL с BaseURL
-			OriginalURL: originalURL,
-		})
+	for shortURL, entry := range ms.urls {
+		if entry.UserID == userID && !entry.IsDeleted {
+			result = append(result, models.UserURL{
+				ShortURL:    shortURL,
+				OriginalURL: entry.OriginalURL,
+			})
+		}
 	}
 
 	return result, nil
@@ -119,8 +123,23 @@ func (ms *MemoryStorage) CheckConnection(ctx context.Context) error {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	if ms.userURLs == nil {
+	if ms.urls == nil {
 		return fmt.Errorf("storage is not initialized")
+	}
+
+	return nil
+}
+
+// BatchDelete помечает URL как удаленные для указанного пользователя
+func (ms *MemoryStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	for _, shortURL := range shortURLs {
+		if entry, exists := ms.urls[shortURL]; exists && entry.UserID == userID {
+			entry.IsDeleted = true
+			ms.urls[shortURL] = entry
+		}
 	}
 
 	return nil

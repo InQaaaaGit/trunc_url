@@ -37,6 +37,9 @@ type URLStorage interface {
 	// Однако, для соответствия интерфейсу сервиса, добавим его.
 	// TODO: Пересмотреть сохранение URL для включения userID.
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+
+	// BatchDelete помечает URL как удаленные для указанного пользователя
+	BatchDelete(ctx context.Context, shortURLs []string, userID string) error
 }
 
 // DatabaseChecker интерфейс для проверки соединения с базой данных

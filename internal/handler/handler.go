@@ -33,6 +33,7 @@ type URLService interface {
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
 }
 
 type Handler struct {
@@ -127,6 +128,10 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, storage.ErrURLNotFound) {
 			http.Error(w, urlNotFoundMessage, http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, storage.ErrURLDeleted) {
+			http.Error(w, "URL is deleted", http.StatusGone)
 			return
 		}
 		h.logger.Error("Error getting original URL", zap.Error(err))
@@ -318,6 +323,60 @@ func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(urls); err != nil {
 		h.logger.Error("Error writing JSON response for user URLs", zap.Error(err))
 	}
+}
+
+// HandleDeleteUserURLs обрабатывает DELETE запрос для удаления URL пользователя
+func (h *Handler) HandleDeleteUserURLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.ContextKeyUserID).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, contentTypeJSON) {
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		return
+	}
+
+	var shortURLs models.DeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&shortURLs); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			h.logger.Error("Error closing request body", zap.Error(err))
+		}
+	}()
+
+	if len(shortURLs) == 0 {
+		http.Error(w, "Empty URL list", http.StatusBadRequest)
+		return
+	}
+
+	// Асинхронное удаление URL
+	go func() {
+		ctx := context.Background() // Используем новый контекст для фоновой операции
+		if err := h.service.BatchDeleteURLs(ctx, shortURLs, userID); err != nil {
+			h.logger.Error("Error deleting URLs",
+				zap.String("userID", userID),
+				zap.Strings("shortURLs", shortURLs),
+				zap.Error(err))
+		} else {
+			h.logger.Info("URLs deleted successfully",
+				zap.String("userID", userID),
+				zap.Int("count", len(shortURLs)))
+		}
+	}()
+
+	// Возвращаем 202 Accepted немедленно
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // AuthMiddleware проверяет аутентификационную куку

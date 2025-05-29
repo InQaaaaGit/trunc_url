@@ -24,6 +24,7 @@ type URLService interface {
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	CheckConnection(ctx context.Context) error
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
 }
 
 // URLServiceImpl implements the URLService
@@ -271,4 +272,9 @@ func (s *URLServiceImpl) GetUserURLs(ctx context.Context, userID string) ([]mode
 		}
 	}
 	return fullUserURLs, nil
+}
+
+// BatchDeleteURLs deletes multiple URLs
+func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error {
+	return s.storage.BatchDelete(ctx, shortURLs, userID)
 }
