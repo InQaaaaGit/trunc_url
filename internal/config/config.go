@@ -12,6 +12,7 @@ type Config struct {
 	BaseURL         string `env:"BASE_URL"`          // Базовый адрес для сокращенных URL
 	FileStoragePath string `env:"FILE_STORAGE_PATH"` // Путь к файлу для хранения URL
 	DatabaseDSN     string `env:"DATABASE_DSN"`      // Строка подключения к базе данных PostgreSQL
+	SecretKey       string `env:"SECRET_KEY"`        // Секретный ключ для подписи кук
 }
 
 // NewConfig инициализирует конфигурацию, читая флаги и переменные окружения.
@@ -21,6 +22,7 @@ func NewConfig() (*Config, error) {
 		BaseURL:         "http://localhost:8080",
 		FileStoragePath: "urls.json",
 		DatabaseDSN:     "",
+		SecretKey:       "your-secret-key", // Значение по умолчанию, лучше изменить
 	}
 
 	// Определяем флаги
@@ -28,6 +30,7 @@ func NewConfig() (*Config, error) {
 	flag.StringVar(&cfg.BaseURL, "b", cfg.BaseURL, "базовый URL для сокращенных ссылок")
 	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "путь к файлу для хранения URL")
 	flag.StringVar(&cfg.DatabaseDSN, "d", cfg.DatabaseDSN, "строка подключения к базе данных PostgreSQL")
+	flag.StringVar(&cfg.SecretKey, "s", cfg.SecretKey, "секретный ключ для подписи кук")
 
 	// Парсим флаги
 	flag.Parse()
