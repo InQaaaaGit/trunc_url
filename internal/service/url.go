@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sync"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
@@ -295,8 +296,8 @@ func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string
 	// Создаем канал для сбора результатов от всех worker'ов (fan-in)
 	errorChan := make(chan error, maxWorkers)
 
-	// Создаем канал для координации завершения работы
-	doneChan := make(chan struct{})
+	// Используем WaitGroup для синхронизации завершения всех worker'ов
+	var wg sync.WaitGroup
 
 	// Разбиваем URL на батчи для параллельной обработки
 	batches := make([][]string, 0)
@@ -320,12 +321,13 @@ func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string
 		zap.Int("batches", len(batches)),
 		zap.Int("workers", workers))
 
+	// Добавляем количество worker'ов в WaitGroup
+	wg.Add(workers)
+
 	// Запускаем worker'ы для параллельной обработки батчей
 	for i := 0; i < workers; i++ {
 		go func(workerID int) {
-			defer func() {
-				doneChan <- struct{}{} // Сигнализируем о завершении worker'а
-			}()
+			defer wg.Done() // Сигнализируем о завершении worker'а
 
 			// Каждый worker обрабатывает свою часть батчей
 			for batchIndex := workerID; batchIndex < len(batches); batchIndex += workers {
@@ -361,12 +363,8 @@ func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string
 
 	// Goroutine для закрытия errorChan после завершения всех worker'ов
 	go func() {
-		workersCompleted := 0
-		for workersCompleted < workers {
-			<-doneChan
-			workersCompleted++
-		}
-		close(errorChan)
+		wg.Wait()        // Ждем завершения всех worker'ов
+		close(errorChan) // Закрываем канал ошибок
 	}()
 
 	// Собираем все ошибки из канала (fan-in consumer)
