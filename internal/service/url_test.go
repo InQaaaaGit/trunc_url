@@ -565,3 +565,43 @@ func TestBatchDeleteURLsFanIn(t *testing.T) {
 
 	t.Logf("Successfully tested fan-in pattern with %d URLs", urlCount)
 }
+
+func TestBatchDeleteURLsWithErrors(t *testing.T) {
+	service, cleanup := setupTestService(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "test-user-errors"
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, userID)
+
+	// Создаем URL которые будут удаляться
+	validURLs := make([]string, 8) // Больше порога для активации параллельной обработки
+	for i := 0; i < 8; i++ {
+		originalURL := fmt.Sprintf("https://valid-url-%d.com", i)
+		shortURL, err := service.CreateShortURL(ctx, originalURL)
+		if err != nil {
+			t.Fatalf("Error creating valid URL %d: %v", i, err)
+		}
+		validURLs[i] = shortURL
+	}
+
+	// Первое удаление должно пройти успешно
+	err := service.BatchDeleteURLs(ctx, validURLs, userID)
+	if err != nil {
+		t.Errorf("First deletion should succeed, got error: %v", err)
+	}
+
+	// Второе удаление тех же URL - они уже удалены, но это не должно быть ошибкой
+	err = service.BatchDeleteURLs(ctx, validURLs, userID)
+	if err != nil {
+		t.Errorf("Deletion of already deleted URLs should not be an error, got: %v", err)
+	}
+
+	// Тестируем пустой список (не должно быть ошибки)
+	err = service.BatchDeleteURLs(ctx, []string{}, userID)
+	if err != nil {
+		t.Errorf("Empty list deletion should not be an error, got: %v", err)
+	}
+
+	t.Logf("BatchDeleteURLs correctly handles various scenarios without errors")
+}
