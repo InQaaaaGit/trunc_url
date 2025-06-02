@@ -211,6 +211,33 @@ func (ps *PostgresStorage) BatchDelete(ctx context.Context, shortURLs []string, 
 		return nil // Нет смысла открывать транзакцию для пустого списка
 	}
 
+	// Определяем максимальный размер батча для одного SQL запроса
+	// PostgreSQL может обрабатывать массивы до 1GB, но для безопасности ограничиваем до 1000 элементов
+	const maxBatchSize = 1000
+
+	// Если URL меньше чем максимальный размер батча, выполняем за один запрос
+	if len(shortURLs) <= maxBatchSize {
+		return ps.batchDeleteChunk(ctx, shortURLs, userID)
+	}
+
+	// Для больших объемов разбиваем на чанки
+	for i := 0; i < len(shortURLs); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(shortURLs) {
+			end = len(shortURLs)
+		}
+
+		chunk := shortURLs[i:end]
+		if err := ps.batchDeleteChunk(ctx, chunk, userID); err != nil {
+			return fmt.Errorf("batch delete chunk error (chunk %d-%d): %w", i, end-1, err)
+		}
+	}
+
+	return nil
+}
+
+// batchDeleteChunk выполняет массовое удаление для одного чанка URL
+func (ps *PostgresStorage) batchDeleteChunk(ctx context.Context, shortURLs []string, userID string) error {
 	// Начинаем транзакцию
 	tx, err := ps.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -219,19 +246,22 @@ func (ps *PostgresStorage) BatchDelete(ctx context.Context, shortURLs []string, 
 	// Гарантируем откат транзакции в случае ошибки
 	defer tx.Rollback() //nolint:errcheck
 
-	// Подготавливаем запрос для batch update
-	stmt, err := tx.PrepareContext(ctx, "UPDATE urls SET is_deleted = TRUE WHERE short_url = $1 AND user_id = $2 AND is_deleted = FALSE")
-	if err != nil {
-		return fmt.Errorf("prepare statement error: %w", err)
-	}
-	defer stmt.Close()
+	// Используем массовый UPDATE с ANY для обновления всех URL за один запрос
+	// Это значительно эффективнее чем цикл отдельных UPDATE'ов
+	query := "UPDATE urls SET is_deleted = TRUE WHERE short_url = ANY($1) AND user_id = $2 AND is_deleted = FALSE"
 
-	// Выполняем обновление для каждого URL
-	for _, shortURL := range shortURLs {
-		_, err := stmt.ExecContext(ctx, shortURL, userID)
-		if err != nil {
-			return fmt.Errorf("batch delete error for shortURL %s: %w", shortURL, err)
-		}
+	// Преобразуем slice в PostgreSQL array
+	result, err := tx.ExecContext(ctx, query, pq.Array(shortURLs), userID)
+	if err != nil {
+		return fmt.Errorf("batch delete query error: %w", err)
+	}
+
+	// Опционально: логируем количество обновленных строк для диагностики
+	if rowsAffected, err := result.RowsAffected(); err == nil {
+		ps.logger.Debug("Batch delete completed",
+			zap.String("userID", userID),
+			zap.Int("requestedURLs", len(shortURLs)),
+			zap.Int64("actuallyDeleted", rowsAffected))
 	}
 
 	// Коммитим транзакцию
