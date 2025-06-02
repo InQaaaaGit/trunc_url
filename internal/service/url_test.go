@@ -22,6 +22,11 @@ func setupTestService(t *testing.T) (*URLServiceImpl, func()) {
 		FileStoragePath: "",
 		DatabaseDSN:     "",
 		SecretKey:       "test-secret-key",
+
+		// Параметры для batch deletion (те же значения что и по умолчанию)
+		BatchDeleteMaxWorkers:          3,
+		BatchDeleteBatchSize:           5,
+		BatchDeleteSequentialThreshold: 5,
 	}
 	logger, _ := zap.NewDevelopment()
 	service, err := NewURLService(cfg, logger)

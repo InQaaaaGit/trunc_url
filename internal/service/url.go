@@ -280,14 +280,17 @@ func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string
 		return nil
 	}
 
+	// Получаем параметры из конфигурации
+	sequentialThreshold := s.config.BatchDeleteSequentialThreshold
+	maxWorkers := s.config.BatchDeleteMaxWorkers
+	batchSize := s.config.BatchDeleteBatchSize
+
 	// Если URL мало, удаляем их последовательно
-	if len(shortURLs) <= 5 {
+	if len(shortURLs) <= sequentialThreshold {
 		return s.storage.BatchDelete(ctx, shortURLs, userID)
 	}
 
 	// Для большого количества URL используем паттерн fan-in
-	const maxWorkers = 3
-	const batchSize = 5
 
 	// Создаем канал для сбора результатов от всех worker'ов (fan-in)
 	errorChan := make(chan error, maxWorkers)
