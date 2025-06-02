@@ -368,17 +368,26 @@ func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string
 	}()
 
 	// Собираем все ошибки из канала (fan-in consumer)
-	var errors []error
+	var errList []error
 	for err := range errorChan {
-		errors = append(errors, err)
+		errList = append(errList, err)
 	}
 
-	// Если были ошибки, возвращаем первую из них
-	if len(errors) > 0 {
+	// Если были ошибки, объединяем их в одну составную ошибку
+	if len(errList) > 0 {
 		s.logger.Error("Batch deletion completed with errors",
 			zap.String("userID", userID),
-			zap.Int("errorCount", len(errors)))
-		return errors[0]
+			zap.Int("errorCount", len(errList)))
+
+		// Создаем детализированное сообщение об ошибке с информацией о всех проблемах
+		errorMsg := fmt.Sprintf("batch deletion failed with %d error(s): ", len(errList))
+		for i, err := range errList {
+			errorMsg += fmt.Sprintf("[%d] %v", i+1, err)
+			if i < len(errList)-1 {
+				errorMsg += "; "
+			}
+		}
+		return errors.New(errorMsg)
 	}
 
 	s.logger.Info("Batch deletion completed successfully",
