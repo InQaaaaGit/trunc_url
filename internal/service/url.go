@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"sync"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"go.uber.org/zap"
@@ -22,6 +24,8 @@ type URLService interface {
 	GetStorage() storage.URLStorage
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	CheckConnection(ctx context.Context) error
+	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
 }
 
 // URLServiceImpl implements the URLService
@@ -84,6 +88,19 @@ func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 
 // CreateShortURL creates a short URL from the original
 func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
+	userID, ok := ctx.Value(middleware.ContextKeyUserID).(string)
+	if !ok || userID == "" {
+		// Если userID не найден в контексте, это может быть ошибкой или особенностью вызова.
+		// В зависимости от требований, можно либо возвращать ошибку, либо генерировать временный userID,
+		// либо использовать некий "общий" userID.
+		// Для автотестов, если кука есть, userID должен быть.
+		// Если куки нет (первый запрос без куки), то AuthMiddleware должен был ее создать и положить userID в контекст.
+		// Таким образом, userID здесь *должен* быть, если AuthMiddleware отработал корректно.
+		s.logger.Error("UserID not found in context during CreateShortURL. This should not happen if AuthMiddleware is working.")
+		return "", fmt.Errorf("userID not found in context, authentication might have failed")
+		// userID = "" // Предыдущая логика, которая приводила к ошибке в тесте
+	}
+
 	if originalURL == "" {
 		return "", fmt.Errorf("empty URL")
 	}
@@ -107,7 +124,7 @@ func (s *URLServiceImpl) CreateShortURL(ctx context.Context, originalURL string)
 	hash := sha256.Sum256([]byte(originalURL))
 	shortURL := base64.URLEncoding.EncodeToString(hash[:])[:8]
 
-	err = s.storage.Save(ctx, shortURL, originalURL)
+	err = s.storage.Save(ctx, shortURL, originalURL, userID)
 	if err != nil {
 		// Check if the error is due to a conflict with the original URL
 		if errors.Is(err, storage.ErrOriginalURLConflict) {
@@ -193,6 +210,7 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 		storageBatch = append(storageBatch, storage.BatchEntry{
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
+			// UserID: userID, // TODO: BatchEntry и SaveBatch должны поддерживать UserID
 		})
 
 		// Add to batch for response
@@ -211,6 +229,10 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 
 	// Save entire batch to storage
 	err := s.storage.SaveBatch(ctx, storageBatch)
+	// TODO: SaveBatch должен правильно обрабатывать userID для каждой записи.
+	// Текущая реализация SaveBatch в memory и file storage использует заглушку "__batch__" или не сохраняет userID.
+	// Для postgres SaveBatch использует "ON CONFLICT DO NOTHING", что не свяжет URL с пользователем,
+	// если BatchEntry не будет содержать UserID и SQL запрос не будет обновлен.
 	if err != nil {
 		log.Printf("Error saving URL batch: %v", err)
 		return nil, fmt.Errorf("error saving batch: %w", err) // Return error
@@ -232,5 +254,149 @@ func (s *URLServiceImpl) CheckConnection(ctx context.Context) error {
 		return checker.CheckConnection(ctx)
 	}
 	// Если хранилище не поддерживает проверку соединения, считаем что оно доступно
+	return nil
+}
+
+// GetUserURLs получает все URL, сокращенные пользователем
+func (s *URLServiceImpl) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	userURLs, err := s.storage.GetUserURLs(ctx, userID)
+	if err != nil {
+		s.logger.Error("Error getting user URLs from storage in service", zap.String("userID", userID), zap.Error(err))
+		return nil, fmt.Errorf("service: could not retrieve URLs for user %s: %w", userID, err)
+	}
+	// Важно: здесь shortURL из хранилища это только ID. Нужно его дополнить BaseURL.
+	fullUserURLs := make([]models.UserURL, len(userURLs))
+	for i, u := range userURLs {
+		fullUserURLs[i] = models.UserURL{
+			ShortURL:    s.config.BaseURL + "/" + u.ShortURL,
+			OriginalURL: u.OriginalURL,
+		}
+	}
+	return fullUserURLs, nil
+}
+
+// BatchDeleteURLs deletes multiple URLs using fan-in pattern
+func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error {
+	if len(shortURLs) == 0 {
+		return nil
+	}
+
+	// Получаем параметры из конфигурации
+	sequentialThreshold := s.config.BatchDeleteSequentialThreshold
+	maxWorkers := s.config.BatchDeleteMaxWorkers
+	batchSize := s.config.BatchDeleteBatchSize
+
+	// Если URL мало, удаляем их последовательно
+	if len(shortURLs) <= sequentialThreshold {
+		return s.storage.BatchDelete(ctx, shortURLs, userID)
+	}
+
+	// Для большого количества URL используем паттерн fan-in
+
+	// Создаем канал для сбора результатов от всех worker'ов (fan-in)
+	errorChan := make(chan error, maxWorkers)
+
+	// Используем WaitGroup для синхронизации завершения всех worker'ов
+	var wg sync.WaitGroup
+
+	// Разбиваем URL на батчи для параллельной обработки
+	batches := make([][]string, 0)
+	for i := 0; i < len(shortURLs); i += batchSize {
+		end := i + batchSize
+		if end > len(shortURLs) {
+			end = len(shortURLs)
+		}
+		batches = append(batches, shortURLs[i:end])
+	}
+
+	// Ограничиваем количество worker'ов
+	workers := len(batches)
+	if workers > maxWorkers {
+		workers = maxWorkers
+	}
+
+	s.logger.Info("Starting parallel URL deletion",
+		zap.String("userID", userID),
+		zap.Int("totalURLs", len(shortURLs)),
+		zap.Int("batches", len(batches)),
+		zap.Int("workers", workers))
+
+	// Добавляем количество worker'ов в WaitGroup
+	wg.Add(workers)
+
+	// Запускаем worker'ы для параллельной обработки батчей
+	for i := 0; i < workers; i++ {
+		go func(workerID int) {
+			defer wg.Done() // Сигнализируем о завершении worker'а
+
+			// Каждый worker обрабатывает свою часть батчей
+			for batchIndex := workerID; batchIndex < len(batches); batchIndex += workers {
+				batch := batches[batchIndex]
+
+				s.logger.Debug("Worker processing batch",
+					zap.Int("workerID", workerID),
+					zap.Int("batchIndex", batchIndex),
+					zap.Strings("urls", batch))
+
+				// Удаляем батч URL
+				if err := s.storage.BatchDelete(ctx, batch, userID); err != nil {
+					s.logger.Debug("Worker encountered error deleting batch",
+						zap.Int("workerID", workerID),
+						zap.Int("batchIndex", batchIndex),
+						zap.Int("batchSize", len(batch)),
+						zap.Error(err))
+
+					// Отправляем ошибку в канал (fan-in)
+					select {
+					case errorChan <- err:
+					case <-ctx.Done():
+						return
+					}
+				} else {
+					s.logger.Debug("Batch deleted successfully",
+						zap.Int("workerID", workerID),
+						zap.Int("batchIndex", batchIndex),
+						zap.Int("count", len(batch)))
+				}
+			}
+		}(i)
+	}
+
+	// Goroutine для закрытия errorChan после завершения всех worker'ов
+	go func() {
+		wg.Wait()        // Ждем завершения всех worker'ов
+		close(errorChan) // Закрываем канал ошибок
+	}()
+
+	// Собираем все ошибки из канала (fan-in consumer)
+	var errList []error
+	for err := range errorChan {
+		errList = append(errList, err)
+	}
+
+	// Если были ошибки, объединяем их в одну составную ошибку
+	if len(errList) > 0 {
+		// Создаем детализированное сообщение об ошибке с информацией о всех проблемах
+		errorMsg := fmt.Sprintf("batch deletion failed with %d error(s): ", len(errList))
+		for i, err := range errList {
+			errorMsg += fmt.Sprintf("[%d] %v", i+1, err)
+			if i < len(errList)-1 {
+				errorMsg += "; "
+			}
+		}
+
+		s.logger.Error("Batch deletion completed with errors",
+			zap.String("userID", userID),
+			zap.Int("totalURLs", len(shortURLs)),
+			zap.Int("errorCount", len(errList)),
+			zap.String("errorDetails", errorMsg))
+
+		return errors.New(errorMsg)
+	}
+
+	s.logger.Info("Batch deletion completed successfully",
+		zap.String("userID", userID),
+		zap.Int("totalURLs", len(shortURLs)))
+
 	return nil
 }

@@ -12,6 +12,12 @@ type Config struct {
 	BaseURL         string `env:"BASE_URL"`          // Базовый адрес для сокращенных URL
 	FileStoragePath string `env:"FILE_STORAGE_PATH"` // Путь к файлу для хранения URL
 	DatabaseDSN     string `env:"DATABASE_DSN"`      // Строка подключения к базе данных PostgreSQL
+	SecretKey       string `env:"SECRET_KEY"`        // Секретный ключ для подписи кук
+
+	// Параметры для batch deletion
+	BatchDeleteMaxWorkers          int `env:"BATCH_DELETE_MAX_WORKERS"`          // Максимальное количество воркеров для параллельного удаления
+	BatchDeleteBatchSize           int `env:"BATCH_DELETE_BATCH_SIZE"`           // Размер батча для обработки URL
+	BatchDeleteSequentialThreshold int `env:"BATCH_DELETE_SEQUENTIAL_THRESHOLD"` // Порог для переключения на последовательное удаление
 }
 
 // NewConfig инициализирует конфигурацию, читая флаги и переменные окружения.
@@ -21,6 +27,12 @@ func NewConfig() (*Config, error) {
 		BaseURL:         "http://localhost:8080",
 		FileStoragePath: "urls.json",
 		DatabaseDSN:     "",
+		SecretKey:       "your-secret-key", // Значение по умолчанию, лучше изменить
+
+		// Значения по умолчанию для batch deletion
+		BatchDeleteMaxWorkers:          3,
+		BatchDeleteBatchSize:           5,
+		BatchDeleteSequentialThreshold: 5,
 	}
 
 	// Определяем флаги
@@ -28,6 +40,12 @@ func NewConfig() (*Config, error) {
 	flag.StringVar(&cfg.BaseURL, "b", cfg.BaseURL, "базовый URL для сокращенных ссылок")
 	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "путь к файлу для хранения URL")
 	flag.StringVar(&cfg.DatabaseDSN, "d", cfg.DatabaseDSN, "строка подключения к базе данных PostgreSQL")
+	flag.StringVar(&cfg.SecretKey, "s", cfg.SecretKey, "секретный ключ для подписи кук")
+
+	// Флаги для настройки batch deletion
+	flag.IntVar(&cfg.BatchDeleteMaxWorkers, "batch-max-workers", cfg.BatchDeleteMaxWorkers, "максимальное количество воркеров для параллельного удаления URL")
+	flag.IntVar(&cfg.BatchDeleteBatchSize, "batch-size", cfg.BatchDeleteBatchSize, "размер батча для обработки URL")
+	flag.IntVar(&cfg.BatchDeleteSequentialThreshold, "batch-sequential-threshold", cfg.BatchDeleteSequentialThreshold, "порог для переключения на последовательное удаление URL")
 
 	// Парсим флаги
 	flag.Parse()
