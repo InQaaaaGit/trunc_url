@@ -161,7 +161,9 @@ func TestApp_MiddlewareIntegration(t *testing.T) {
 	app.router.ServeHTTP(rr, req)
 
 	// Check that user_id cookie is set (AuthMiddleware)
-	cookies := rr.Result().Cookies()
+	result := rr.Result()
+	defer result.Body.Close()
+	cookies := result.Cookies()
 	var userIDCookieFound bool
 	for _, cookie := range cookies {
 		if cookie.Name == "user_id" {

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewConfig_Defaults(t *testing.T) {
+func TestNewConfigDefaults(t *testing.T) {
 	// Reset flags for clean test
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
@@ -29,7 +29,7 @@ func TestNewConfig_Defaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.BatchDeleteSequentialThreshold)
 }
 
-func TestNewConfig_EnvironmentVariables(t *testing.T) {
+func TestNewConfigEnvironmentVariables(t *testing.T) {
 	// Reset flags for clean test
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 
@@ -60,7 +60,7 @@ func TestNewConfig_EnvironmentVariables(t *testing.T) {
 	assert.Equal(t, 15, cfg.BatchDeleteSequentialThreshold)
 }
 
-func TestNewConfig_CommandLineFlags(t *testing.T) {
+func TestNewConfigCommandLineFlags(t *testing.T) {
 	// Save original args
 	originalArgs := os.Args
 	defer func() {
@@ -97,7 +97,7 @@ func TestNewConfig_CommandLineFlags(t *testing.T) {
 	assert.Equal(t, 10, cfg.BatchDeleteSequentialThreshold)
 }
 
-func TestNewConfig_EnvironmentOverridesFlags(t *testing.T) {
+func TestNewConfigEnvironmentOverridesFlags(t *testing.T) {
 	// Save original args
 	originalArgs := os.Args
 	defer func() {
@@ -127,7 +127,7 @@ func TestNewConfig_EnvironmentOverridesFlags(t *testing.T) {
 	assert.Equal(t, "http://env.local", cfg.BaseURL)
 }
 
-func TestConfig_AllFields(t *testing.T) {
+func TestConfigAllFields(t *testing.T) {
 	// Test that all expected fields exist in Config struct
 	cfg := &Config{}
 
