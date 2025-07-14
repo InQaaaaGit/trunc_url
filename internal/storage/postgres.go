@@ -143,8 +143,8 @@ func (ps *PostgresStorage) SaveBatch(ctx context.Context, batch []BatchEntry) er
 	// Выполняем вставку для каждой записи в пакете
 	for _, entry := range batch {
 		_, err := tx.ExecContext(ctx,
-			"INSERT INTO urls (short_url, original_url) VALUES ($1, $2) ON CONFLICT (short_url) DO NOTHING",
-			entry.ShortURL, entry.OriginalURL)
+			"INSERT INTO urls (short_url, original_url, user_id) VALUES ($1, $2, $3) ON CONFLICT (short_url) DO NOTHING",
+			entry.ShortURL, entry.OriginalURL, entry.UserID)
 		if err != nil {
 			return fmt.Errorf("insert query execution error for shortURL %s: %w", entry.ShortURL, err)
 		}

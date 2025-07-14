@@ -13,6 +13,7 @@ import (
 type BatchEntry struct {
 	ShortURL    string // Короткий идентификатор URL
 	OriginalURL string // Оригинальный полный URL
+	UserID      string // Идентификатор пользователя, который создал URL
 }
 
 // URLStorage определяет интерфейс для хранилища URL.

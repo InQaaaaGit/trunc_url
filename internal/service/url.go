@@ -194,6 +194,13 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 		return []models.BatchResponseEntry{}, nil // Return empty slice if input is empty
 	}
 
+	// Получаем userID из контекста
+	userID, ok := ctx.Value(middleware.ContextKeyUserID).(string)
+	if !ok || userID == "" {
+		s.logger.Error("UserID not found in context during CreateShortURLsBatch")
+		return nil, fmt.Errorf("userID not found in context, authentication might have failed")
+	}
+
 	storageBatch := make([]storage.BatchEntry, 0, len(reqBatch))
 	respBatch := make([]models.BatchResponseEntry, 0, len(reqBatch))
 
@@ -230,7 +237,7 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 		storageBatch = append(storageBatch, storage.BatchEntry{
 			ShortURL:    shortURL,
 			OriginalURL: originalURL,
-			// UserID: userID, // TODO: BatchEntry и SaveBatch должны поддерживать UserID
+			UserID:      userID,
 		})
 
 		// Add to batch for response
@@ -249,10 +256,6 @@ func (s *URLServiceImpl) CreateShortURLsBatch(ctx context.Context, reqBatch []mo
 
 	// Save entire batch to storage
 	err := s.storage.SaveBatch(ctx, storageBatch)
-	// TODO: SaveBatch должен правильно обрабатывать userID для каждой записи.
-	// Текущая реализация SaveBatch в memory и file storage использует заглушку "__batch__" или не сохраняет userID.
-	// Для postgres SaveBatch использует "ON CONFLICT DO NOTHING", что не свяжет URL с пользователем,
-	// если BatchEntry не будет содержать UserID и SQL запрос не будет обновлен.
 	if err != nil {
 		log.Printf("Error saving URL batch: %v", err)
 		return nil, fmt.Errorf("error saving batch: %w", err) // Return error

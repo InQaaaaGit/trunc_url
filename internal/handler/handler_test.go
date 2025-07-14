@@ -487,7 +487,7 @@ func setupBenchHandler(b *testing.B) *Handler {
 		urls:        urls,
 		deletedURLs: deletedURLs,
 		createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
-			shortURL := "short" + originalURL[len("https://example"):]
+			shortURL := fmt.Sprintf("short-%d", len(urls))
 			urls[shortURL] = originalURL
 			return shortURL, nil
 		},
@@ -503,7 +503,7 @@ func setupBenchHandler(b *testing.B) *Handler {
 		createShortURLsBatchFunc: func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
 			result := make([]models.BatchResponseEntry, len(batch))
 			for i, entry := range batch {
-				shortURL := "batch" + entry.OriginalURL[len("https://example"):]
+				shortURL := fmt.Sprintf("batch-%d-%d", len(urls), i)
 				urls[shortURL] = entry.OriginalURL
 				result[i] = models.BatchResponseEntry{
 					CorrelationID: entry.CorrelationID,
@@ -523,13 +523,14 @@ func BenchmarkHandler_HandleCreateURL(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		originalURL := fmt.Sprintf("https://example%d.com", i)
+		originalURL := fmt.Sprintf("https://bench-handler-create-%d.com/path", i)
 		body := strings.NewReader(originalURL)
 		req := httptest.NewRequest(http.MethodPost, "/", body)
 		req.Header.Set("Content-Type", "text/plain")
 
 		// Add user context
-		ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "bench-user")
+		userID := fmt.Sprintf("bench-handler-user-%d", b.N)
+		ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, userID)
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
@@ -546,7 +547,7 @@ func BenchmarkHandler_HandleShortenURL(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		originalURL := fmt.Sprintf("https://example%d.com", i)
+		originalURL := fmt.Sprintf("https://bench-handler-shorten-%d.com/path", i)
 		requestBody := ShortenRequest{URL: originalURL}
 		body, _ := json.Marshal(requestBody)
 
@@ -554,7 +555,8 @@ func BenchmarkHandler_HandleShortenURL(b *testing.B) {
 		req.Header.Set("Content-Type", "application/json")
 
 		// Add user context
-		ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "bench-user")
+		userID := fmt.Sprintf("bench-handler-shorten-user-%d", b.N)
+		ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, userID)
 		req = req.WithContext(ctx)
 
 		w := httptest.NewRecorder()
@@ -574,8 +576,8 @@ func BenchmarkHandler_HandleRedirect(b *testing.B) {
 	shortURLs := make([]string, numEntries)
 	mockSvc := handler.service.(*mockURLService)
 	for i := 0; i < numEntries; i++ {
-		originalURL := fmt.Sprintf("https://example%d.com", i)
-		shortURL := fmt.Sprintf("short%d.com", i)
+		originalURL := fmt.Sprintf("https://bench-handler-redirect-%d.com/path", i)
+		shortURL := fmt.Sprintf("bench-short-%d", i)
 		mockSvc.urls[shortURL] = originalURL
 		shortURLs[i] = shortURL
 	}
@@ -611,10 +613,11 @@ func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				batch := make([]models.BatchRequestEntry, batchSize)
+				baseID := i*1000000 + batchSize*1000 // Ensure uniqueness across iterations
 				for j := 0; j < batchSize; j++ {
 					batch[j] = models.BatchRequestEntry{
-						CorrelationID: fmt.Sprintf("corr_%d_%d", i, j),
-						OriginalURL:   fmt.Sprintf("https://example%d_%d.com", i, j),
+						CorrelationID: fmt.Sprintf("corr_%d_%d", baseID, j),
+						OriginalURL:   fmt.Sprintf("https://bench-handler-batch-%d-%d.com/path", baseID, j),
 					}
 				}
 
@@ -623,7 +626,8 @@ func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
 				req.Header.Set("Content-Type", "application/json")
 
 				// Add user context
-				ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "bench-user")
+				userID := fmt.Sprintf("bench-handler-batch-user-%d", b.N)
+				ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, userID)
 				req = req.WithContext(ctx)
 
 				w := httptest.NewRecorder()

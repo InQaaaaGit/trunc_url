@@ -85,21 +85,15 @@ func (ms *MemoryStorage) GetShortURLByOriginal(ctx context.Context, originalURL 
 	return "", ErrURLNotFound
 }
 
-// SaveBatch сохраняет пакет URL
-// В текущей реализации SaveBatch не учитывает userID. Это нужно будет доработать.
-// Пока что будем сохранять без привязки к пользователю или в "общую" область.
-// Для корректной работы с пользователями, BatchEntry должен содержать UserID.
+// SaveBatch сохраняет пакет URL с поддержкой пользователей
 func (ms *MemoryStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
-	// Используем фиктивный userID для пакетной вставки, так как интерфейс не передает его
-	const batchUserID = "__batch__"
-
 	for _, entry := range batch {
 		ms.urls[entry.ShortURL] = URLEntry{
 			OriginalURL: entry.OriginalURL,
-			UserID:      batchUserID,
+			UserID:      entry.UserID,
 			IsDeleted:   false,
 		}
 	}

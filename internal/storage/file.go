@@ -130,6 +130,7 @@ func (fs *FileStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error 
 		record := URLRecord{
 			ShortURL:    entry.ShortURL,
 			OriginalURL: entry.OriginalURL,
+			UserID:      entry.UserID,
 			IsDeleted:   false,
 		}
 
