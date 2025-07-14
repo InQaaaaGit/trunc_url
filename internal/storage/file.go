@@ -80,9 +80,11 @@ func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL, userID s
 	defer fs.mutex.Unlock()
 
 	// Проверка на конфликт по originalURL для данного userID
-	// Это требует изменения логики GetShortURLByOriginal или добавления новой функции,
-	// так как текущая проверяет глобально.
-	// Пока оставим как есть, но это потенциальное место для улучшения.
+	for existingShort, record := range fs.urls {
+		if record.OriginalURL == originalURL && record.UserID == userID && !record.IsDeleted && existingShort != shortURL {
+			return ErrOriginalURLConflict
+		}
+	}
 
 	record := URLRecord{
 		ShortURL:    shortURL,

@@ -21,6 +21,7 @@ func TestFileStorage_Save(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 
@@ -40,6 +41,7 @@ func TestFileStorage_Get(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 
@@ -68,9 +70,13 @@ func TestFileStorage_Persistence(t *testing.T) {
 	err = storage1.Save(ctx, "abc123", "https://example.com", "user1")
 	require.NoError(t, err)
 
+	// Close first storage to ensure data is flushed
+	storage1.Close()
+
 	// Create second storage instance from same file
 	storage2, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage2.Close()
 
 	// Verify data is persisted
 	originalURL, err := storage2.Get(ctx, "abc123")
@@ -84,6 +90,7 @@ func TestFileStorage_GetShortURLByOriginal(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 
@@ -107,6 +114,7 @@ func TestFileStorage_SaveBatch(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 
@@ -135,6 +143,7 @@ func TestFileStorage_GetUserURLs(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 
@@ -160,6 +169,7 @@ func TestFileStorage_BatchDelete(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 
@@ -182,6 +192,7 @@ func TestFileStorage_ConflictDetection(t *testing.T) {
 
 	storage, err := NewFileStorage(tempFile, logger)
 	require.NoError(t, err)
+	defer storage.Close()
 
 	ctx := context.Background()
 

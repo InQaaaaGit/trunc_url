@@ -37,6 +37,13 @@ func (ms *MemoryStorage) Save(ctx context.Context, shortURL, originalURL, userID
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
+	// Проверка на конфликт по originalURL для данного userID
+	for existingShort, entry := range ms.urls {
+		if entry.OriginalURL == originalURL && entry.UserID == userID && !entry.IsDeleted && existingShort != shortURL {
+			return ErrOriginalURLConflict
+		}
+	}
+
 	ms.urls[shortURL] = URLEntry{
 		OriginalURL: originalURL,
 		UserID:      userID,
