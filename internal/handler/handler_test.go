@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -470,3 +471,168 @@ var _ service.URLService = (*mockURLService)(nil)
 var _ storage.URLStorage = (*mockStorage)(nil)
 var _ storage.URLStorage = (*mockDatabaseChecker)(nil)
 var _ storage.DatabaseChecker = (*mockDatabaseChecker)(nil)
+
+// Benchmarks
+
+func setupBenchHandler(b *testing.B) *Handler {
+	cfg := &config.Config{
+		BaseURL:   "http://localhost:8080",
+		SecretKey: "test-secret-key",
+	}
+
+	urls := make(map[string]string)
+	deletedURLs := make(map[string]bool)
+
+	mockSvc := &mockURLService{
+		urls:        urls,
+		deletedURLs: deletedURLs,
+		createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
+			shortURL := "short" + originalURL[len("https://example"):]
+			urls[shortURL] = originalURL
+			return shortURL, nil
+		},
+		getOriginalURLFunc: func(ctx context.Context, shortURL string) (string, error) {
+			if deletedURLs[shortURL] {
+				return "", storage.ErrURLDeleted
+			}
+			if url, exists := urls[shortURL]; exists {
+				return url, nil
+			}
+			return "", storage.ErrURLNotFound
+		},
+		createShortURLsBatchFunc: func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
+			result := make([]models.BatchResponseEntry, len(batch))
+			for i, entry := range batch {
+				shortURL := "batch" + entry.OriginalURL[len("https://example"):]
+				urls[shortURL] = entry.OriginalURL
+				result[i] = models.BatchResponseEntry{
+					CorrelationID: entry.CorrelationID,
+					ShortURL:      cfg.BaseURL + "/" + shortURL,
+				}
+			}
+			return result, nil
+		},
+	}
+
+	logger := zap.NewNop()
+	return NewHandler(mockSvc, cfg, logger)
+}
+
+func BenchmarkHandler_HandleCreateURL(b *testing.B) {
+	handler := setupBenchHandler(b)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		body := strings.NewReader(originalURL)
+		req := httptest.NewRequest(http.MethodPost, "/", body)
+		req.Header.Set("Content-Type", "text/plain")
+
+		// Add user context
+		ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "bench-user")
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.HandleCreateURL(w, req)
+
+		if w.Code != http.StatusCreated {
+			b.Fatalf("Expected status %d, got %d", http.StatusCreated, w.Code)
+		}
+	}
+}
+
+func BenchmarkHandler_HandleShortenURL(b *testing.B) {
+	handler := setupBenchHandler(b)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		requestBody := ShortenRequest{URL: originalURL}
+		body, _ := json.Marshal(requestBody)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		// Add user context
+		ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "bench-user")
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.HandleShortenURL(w, req)
+
+		if w.Code != http.StatusCreated {
+			b.Fatalf("Expected status %d, got %d", http.StatusCreated, w.Code)
+		}
+	}
+}
+
+func BenchmarkHandler_HandleRedirect(b *testing.B) {
+	handler := setupBenchHandler(b)
+
+	// Pre-populate with URLs
+	numEntries := 10000
+	shortURLs := make([]string, numEntries)
+	mockSvc := handler.service.(*mockURLService)
+	for i := 0; i < numEntries; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		shortURL := fmt.Sprintf("short%d.com", i)
+		mockSvc.urls[shortURL] = originalURL
+		shortURLs[i] = shortURL
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shortURL := shortURLs[i%numEntries]
+		req := httptest.NewRequest(http.MethodGet, "/"+shortURL, nil)
+
+		// Add chi URL param
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("shortURL", shortURL)
+		ctx := context.WithValue(req.Context(), chi.RouteCtxKey, rctx)
+		req = req.WithContext(ctx)
+
+		w := httptest.NewRecorder()
+		handler.HandleRedirect(w, req)
+
+		if w.Code != http.StatusTemporaryRedirect {
+			b.Fatalf("Expected status %d, got %d", http.StatusTemporaryRedirect, w.Code)
+		}
+	}
+}
+
+func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
+	handler := setupBenchHandler(b)
+
+	// Test different batch sizes
+	batchSizes := []int{10, 50, 100}
+
+	for _, batchSize := range batchSizes {
+		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				batch := make([]models.BatchRequestEntry, batchSize)
+				for j := 0; j < batchSize; j++ {
+					batch[j] = models.BatchRequestEntry{
+						CorrelationID: fmt.Sprintf("corr_%d_%d", i, j),
+						OriginalURL:   fmt.Sprintf("https://example%d_%d.com", i, j),
+					}
+				}
+
+				body, _ := json.Marshal(batch)
+				req := httptest.NewRequest(http.MethodPost, "/api/shorten/batch", bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+
+				// Add user context
+				ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "bench-user")
+				req = req.WithContext(ctx)
+
+				w := httptest.NewRecorder()
+				handler.HandleShortenBatch(w, req)
+
+				if w.Code != http.StatusCreated {
+					b.Fatalf("Expected status %d, got %d", http.StatusCreated, w.Code)
+				}
+			}
+		})
+	}
+}

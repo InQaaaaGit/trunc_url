@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -10,8 +11,8 @@ import (
 	"go.uber.org/zap"
 )
 
-func createTempFile(t *testing.T) string {
-	tempDir := t.TempDir()
+func createTempFile(tb testing.TB) string {
+	tempDir := tb.TempDir()
 	return filepath.Join(tempDir, "test_urls.json")
 }
 
@@ -217,4 +218,129 @@ func TestFileStorage_NewFileStorageErrors(t *testing.T) {
 	tempDir := t.TempDir()
 	_, err = NewFileStorage(tempDir, logger)
 	assert.Error(t, err)
+}
+
+// Benchmarks
+
+func BenchmarkFileStorage_Save(b *testing.B) {
+	logger := zap.NewNop()
+	tempFile := createTempFile(b)
+
+	storage, err := NewFileStorage(tempFile, logger)
+	if err != nil {
+		b.Fatalf("Failed to create FileStorage: %v", err)
+	}
+	defer storage.Close()
+
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shortURL := fmt.Sprintf("bench%d", i)
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		userID := fmt.Sprintf("user%d", i%100) // Rotate users to simulate real usage
+
+		err := storage.Save(ctx, shortURL, originalURL, userID)
+		if err != nil {
+			b.Fatalf("Save failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkFileStorage_Get(b *testing.B) {
+	logger := zap.NewNop()
+	tempFile := createTempFile(b)
+
+	storage, err := NewFileStorage(tempFile, logger)
+	if err != nil {
+		b.Fatalf("Failed to create FileStorage: %v", err)
+	}
+	defer storage.Close()
+
+	ctx := context.Background()
+
+	// Pre-populate storage
+	numEntries := 1000 // Smaller for file storage to avoid too much I/O overhead
+	for i := 0; i < numEntries; i++ {
+		shortURL := fmt.Sprintf("short%d", i)
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		userID := fmt.Sprintf("user%d", i%100)
+		storage.Save(ctx, shortURL, originalURL, userID)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shortURL := fmt.Sprintf("short%d", i%numEntries)
+		_, err := storage.Get(ctx, shortURL)
+		if err != nil {
+			b.Fatalf("Get failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkFileStorage_GetShortURLByOriginal(b *testing.B) {
+	logger := zap.NewNop()
+	tempFile := createTempFile(b)
+
+	storage, err := NewFileStorage(tempFile, logger)
+	if err != nil {
+		b.Fatalf("Failed to create FileStorage: %v", err)
+	}
+	defer storage.Close()
+
+	ctx := context.Background()
+
+	// Pre-populate storage
+	numEntries := 1000 // Smaller for file storage
+	for i := 0; i < numEntries; i++ {
+		shortURL := fmt.Sprintf("short%d", i)
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		userID := fmt.Sprintf("user%d", i%100)
+		storage.Save(ctx, shortURL, originalURL, userID)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i%numEntries)
+		_, err := storage.GetShortURLByOriginal(ctx, originalURL)
+		if err != nil {
+			b.Fatalf("GetShortURLByOriginal failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkFileStorage_SaveBatch(b *testing.B) {
+	logger := zap.NewNop()
+	tempFile := createTempFile(b)
+
+	storage, err := NewFileStorage(tempFile, logger)
+	if err != nil {
+		b.Fatalf("Failed to create FileStorage: %v", err)
+	}
+	defer storage.Close()
+
+	ctx := context.Background()
+
+	// Test different batch sizes (smaller for file storage)
+	batchSizes := []int{10, 50, 100}
+
+	for _, batchSize := range batchSizes {
+		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				batch := make([]BatchEntry, batchSize)
+				for j := 0; j < batchSize; j++ {
+					batch[j] = BatchEntry{
+						ShortURL:    fmt.Sprintf("batch_%d_%d", i, j),
+						OriginalURL: fmt.Sprintf("https://example%d_%d.com", i, j),
+					}
+				}
+
+				err := storage.SaveBatch(ctx, batch)
+				if err != nil {
+					b.Fatalf("SaveBatch failed: %v", err)
+				}
+			}
+		})
+	}
 }

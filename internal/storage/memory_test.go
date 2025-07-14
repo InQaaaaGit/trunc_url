@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -173,4 +174,101 @@ func TestMemoryStorage_ConflictDetection(t *testing.T) {
 	// Try to save different original URL with same short URL (should be allowed in current implementation)
 	err = storage.Save(ctx, "abc123", "https://different.com", "user1")
 	assert.NoError(t, err) // This overwrites the previous entry
+}
+
+// Benchmarks
+
+func BenchmarkMemoryStorage_Save(b *testing.B) {
+	logger := zap.NewNop()
+	storage := NewMemoryStorage(logger)
+	ctx := context.Background()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shortURL := fmt.Sprintf("bench%d", i)
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		userID := fmt.Sprintf("user%d", i%100) // Rotate users to simulate real usage
+
+		err := storage.Save(ctx, shortURL, originalURL, userID)
+		if err != nil {
+			b.Fatalf("Save failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkMemoryStorage_Get(b *testing.B) {
+	logger := zap.NewNop()
+	storage := NewMemoryStorage(logger)
+	ctx := context.Background()
+
+	// Pre-populate storage
+	numEntries := 10000
+	for i := 0; i < numEntries; i++ {
+		shortURL := fmt.Sprintf("short%d", i)
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		userID := fmt.Sprintf("user%d", i%100)
+		storage.Save(ctx, shortURL, originalURL, userID)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shortURL := fmt.Sprintf("short%d", i%numEntries)
+		_, err := storage.Get(ctx, shortURL)
+		if err != nil {
+			b.Fatalf("Get failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkMemoryStorage_GetShortURLByOriginal(b *testing.B) {
+	logger := zap.NewNop()
+	storage := NewMemoryStorage(logger)
+	ctx := context.Background()
+
+	// Pre-populate storage
+	numEntries := 10000
+	for i := 0; i < numEntries; i++ {
+		shortURL := fmt.Sprintf("short%d", i)
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		userID := fmt.Sprintf("user%d", i%100)
+		storage.Save(ctx, shortURL, originalURL, userID)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i%numEntries)
+		_, err := storage.GetShortURLByOriginal(ctx, originalURL)
+		if err != nil {
+			b.Fatalf("GetShortURLByOriginal failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkMemoryStorage_SaveBatch(b *testing.B) {
+	logger := zap.NewNop()
+	storage := NewMemoryStorage(logger)
+	ctx := context.Background()
+
+	// Test different batch sizes
+	batchSizes := []int{10, 50, 100, 500}
+
+	for _, batchSize := range batchSizes {
+		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				batch := make([]BatchEntry, batchSize)
+				for j := 0; j < batchSize; j++ {
+					batch[j] = BatchEntry{
+						ShortURL:    fmt.Sprintf("batch_%d_%d", i, j),
+						OriginalURL: fmt.Sprintf("https://example%d_%d.com", i, j),
+					}
+				}
+
+				err := storage.SaveBatch(ctx, batch)
+				if err != nil {
+					b.Fatalf("SaveBatch failed: %v", err)
+				}
+			}
+		})
+	}
 }

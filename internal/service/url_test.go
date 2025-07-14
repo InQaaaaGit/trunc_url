@@ -605,3 +605,175 @@ func TestBatchDeleteURLsWithErrors(t *testing.T) {
 
 	t.Logf("BatchDeleteURLs correctly handles various scenarios without errors")
 }
+
+// Benchmarks
+
+func setupBenchService(b *testing.B) (*URLServiceImpl, func()) {
+	cfg := &config.Config{
+		BaseURL:         "http://localhost:8080",
+		FileStoragePath: "",
+		DatabaseDSN:     "",
+		SecretKey:       "test-secret-key",
+
+		// Параметры для batch deletion
+		BatchDeleteMaxWorkers:          3,
+		BatchDeleteBatchSize:           5,
+		BatchDeleteSequentialThreshold: 5,
+	}
+
+	logger := zap.NewNop()
+
+	urlService, err := NewURLService(cfg, logger)
+	if err != nil {
+		b.Fatalf("Failed to create URL service: %v", err)
+	}
+
+	service := urlService.(*URLServiceImpl)
+
+	return service, func() {
+		// Cleanup if needed
+	}
+}
+
+func BenchmarkURLService_CreateShortURL(b *testing.B) {
+	service, cleanup := setupBenchService(b)
+	defer cleanup()
+
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, "bench-user")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		_, err := service.CreateShortURL(ctx, originalURL)
+		if err != nil {
+			b.Fatalf("CreateShortURL failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkURLService_GetOriginalURL(b *testing.B) {
+	service, cleanup := setupBenchService(b)
+	defer cleanup()
+
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, "bench-user")
+
+	// Pre-populate with URLs
+	numEntries := 10000
+	shortURLs := make([]string, numEntries)
+	for i := 0; i < numEntries; i++ {
+		originalURL := fmt.Sprintf("https://example%d.com", i)
+		shortURL, err := service.CreateShortURL(ctx, originalURL)
+		if err != nil {
+			b.Fatalf("Failed to populate data: %v", err)
+		}
+		shortURLs[i] = shortURL
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		shortURL := shortURLs[i%numEntries]
+		_, err := service.GetOriginalURL(ctx, shortURL)
+		if err != nil {
+			b.Fatalf("GetOriginalURL failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkURLService_CreateShortURLsBatch(b *testing.B) {
+	service, cleanup := setupBenchService(b)
+	defer cleanup()
+
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, "bench-user")
+
+	// Test different batch sizes
+	batchSizes := []int{10, 50, 100, 500}
+
+	for _, batchSize := range batchSizes {
+		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				batch := make([]models.BatchRequestEntry, batchSize)
+				for j := 0; j < batchSize; j++ {
+					batch[j] = models.BatchRequestEntry{
+						CorrelationID: fmt.Sprintf("corr_%d_%d", i, j),
+						OriginalURL:   fmt.Sprintf("https://example%d_%d.com", i, j),
+					}
+				}
+
+				_, err := service.CreateShortURLsBatch(ctx, batch)
+				if err != nil {
+					b.Fatalf("CreateShortURLsBatch failed: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkURLService_GetUserURLs(b *testing.B) {
+	service, cleanup := setupBenchService(b)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "bench-user"
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, userID)
+
+	// Pre-populate with user URLs
+	numEntries := 1000
+	for i := 0; i < numEntries; i++ {
+		originalURL := fmt.Sprintf("https://user-example%d.com", i)
+		_, err := service.CreateShortURL(ctx, originalURL)
+		if err != nil {
+			b.Fatalf("Failed to populate user data: %v", err)
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := service.GetUserURLs(ctx, userID)
+		if err != nil {
+			b.Fatalf("GetUserURLs failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkURLService_BatchDeleteURLs(b *testing.B) {
+	service, cleanup := setupBenchService(b)
+	defer cleanup()
+
+	ctx := context.Background()
+	userID := "bench-user"
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, userID)
+
+	// Test different batch sizes for deletion
+	batchSizes := []int{10, 50, 100}
+
+	for _, batchSize := range batchSizes {
+		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+
+				// Pre-populate URLs to delete
+				shortURLs := make([]string, batchSize)
+				for j := 0; j < batchSize; j++ {
+					originalURL := fmt.Sprintf("https://delete-example%d_%d.com", i, j)
+					shortURL, err := service.CreateShortURL(ctx, originalURL)
+					if err != nil {
+						b.Fatalf("Failed to populate data for deletion: %v", err)
+					}
+					shortURLs[j] = shortURL
+				}
+
+				b.StartTimer()
+
+				err := service.BatchDeleteURLs(ctx, shortURLs, userID)
+				if err != nil {
+					b.Fatalf("BatchDeleteURLs failed: %v", err)
+				}
+			}
+		})
+	}
+}
