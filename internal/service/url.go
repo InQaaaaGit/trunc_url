@@ -1,3 +1,5 @@
+// Package service реализует бизнес-логику для сервиса сокращения URL.
+// Предоставляет сервисный слой между HTTP обработчиками и хранилищем данных.
 package service
 
 import (
@@ -17,26 +19,44 @@ import (
 	"go.uber.org/zap"
 )
 
-// URLService defines the interface for the URL service
+// URLService определяет интерфейс для бизнес-логики работы с URL.
+// Предоставляет методы высокого уровня для создания, получения и управления URL,
+// инкапсулируя логику валидации, генерации хешей и работы с хранилищем.
 type URLService interface {
+	// CreateShortURL создает сокращенный URL из оригинального с валидацией и проверкой дубликатов
 	CreateShortURL(ctx context.Context, originalURL string) (string, error)
+	// GetOriginalURL получает оригинальный URL по короткому идентификатору
 	GetOriginalURL(ctx context.Context, shortURL string) (string, error)
+	// GetStorage возвращает используемое хранилище (для интеграционных тестов)
 	GetStorage() storage.URLStorage
+	// CreateShortURLsBatch создает несколько сокращенных URL за один запрос
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	// CheckConnection проверяет доступность хранилища данных
 	CheckConnection(ctx context.Context) error
+	// GetUserURLs получает все URL пользователя с формированием полных адресов
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	// BatchDeleteURLs выполняет массовое удаление URL с оптимизацией для больших объемов
 	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
 }
 
-// URLServiceImpl implements the URLService
+// URLServiceImpl реализует интерфейс URLService.
+// Содержит зависимости для работы с хранилищем, конфигурацией и логированием.
 type URLServiceImpl struct {
-	storage storage.URLStorage
-	config  *config.Config
-	logger  *zap.Logger
+	storage storage.URLStorage // Хранилище URL
+	config  *config.Config     // Конфигурация приложения
+	logger  *zap.Logger        // Логгер для записи событий
 }
 
-// NewURLService creates a new instance of URLService, choosing storage
-// depending on the configuration with priority: PostgreSQL -> File -> Memory.
+// NewURLService создает новый экземпляр URLService с автоматическим выбором хранилища.
+// Приоритет выбора хранилища: PostgreSQL -> File -> Memory.
+// Если PostgreSQL недоступен, автоматически переключается на файловое хранилище,
+// если файловое хранилище недоступно - использует память.
+//
+// Параметры:
+//   - cfg: конфигурация с настройками подключения к различным хранилищам
+//   - logger: логгер для записи событий инициализации и работы сервиса
+//
+// Возвращает URLService или ошибку при критических проблемах инициализации.
 func NewURLService(cfg *config.Config, logger *zap.Logger) (URLService, error) {
 	var store storage.URLStorage
 	var err error

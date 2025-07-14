@@ -1,3 +1,5 @@
+// Package handler содержит HTTP обработчики для сервиса сокращения URL.
+// Этот пакет предоставляет REST API для создания, получения и управления сокращенными URL.
 package handler
 
 import (
@@ -26,22 +28,33 @@ const (
 	urlNotFoundMessage = "URL not found"
 )
 
-// URLService определяет интерфейс для работы с URL
+// URLService определяет интерфейс для работы с URL сервисом.
+// Содержит методы для создания, получения и управления сокращенными URL.
 type URLService interface {
+	// CreateShortURL создает короткий URL из оригинального
 	CreateShortURL(ctx context.Context, url string) (string, error)
+	// GetOriginalURL получает оригинальный URL по короткому идентификатору
 	GetOriginalURL(ctx context.Context, shortID string) (string, error)
+	// GetStorage возвращает интерфейс хранилища
 	GetStorage() storage.URLStorage
+	// CreateShortURLsBatch создает несколько коротких URL за один запрос
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	// GetUserURLs получает все URL пользователя
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	// BatchDeleteURLs помечает URL как удаленные
 	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
 }
 
+// Handler структура для обработки HTTP запросов.
+// Содержит зависимости: сервис URL, конфигурацию и логгер.
 type Handler struct {
 	service service.URLService
 	cfg     *config.Config
 	logger  *zap.Logger
 }
 
+// NewHandler создает новый экземпляр Handler с переданными зависимостями.
+// Принимает сервис URL, конфигурацию и логгер.
 func NewHandler(service service.URLService, cfg *config.Config, logger *zap.Logger) *Handler {
 	return &Handler{
 		service: service,
@@ -144,12 +157,16 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
+// ShortenRequest представляет запрос на создание короткого URL через API.
+// Используется в JSON API эндпоинте /api/shorten.
 type ShortenRequest struct {
-	URL string `json:"url"`
+	URL string `json:"url"` // Оригинальный URL для сокращения
 }
 
+// ShortenResponse представляет ответ с сокращенным URL.
+// Возвращается в JSON API эндпоинте /api/shorten.
 type ShortenResponse struct {
-	Result string `json:"result"`
+	Result string `json:"result"` // Сокращенный URL
 }
 
 // HandleShortenURL обрабатывает POST запрос для создания короткого URL в формате JSON
