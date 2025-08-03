@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/app"
@@ -8,7 +9,24 @@ import (
 	"go.uber.org/zap"
 )
 
+// Глобальные переменные для информации о сборке
+var (
+	buildVersion = "N/A"
+	buildDate    = "N/A"
+	buildCommit  = "N/A"
+)
+
+// printBuildInfo выводит информацию о сборке приложения
+func printBuildInfo() {
+	fmt.Printf("Build version: %s\n", buildVersion)
+	fmt.Printf("Build date: %s\n", buildDate)
+	fmt.Printf("Build commit: %s\n", buildCommit)
+}
+
 func main() {
+	// Выводим информацию о сборке
+	printBuildInfo()
+
 	// Инициализация логгера
 	logger, err := zap.NewProduction()
 	if err != nil {
@@ -36,9 +54,20 @@ func main() {
 	}
 
 	// Запуск сервера
-	server := application.GetServer()
-	logger.Info("Сервер запускается", zap.String("address", cfg.ServerAddress))
-	if err := server.ListenAndServe(); err != nil {
-		logger.Fatal("Server failed to start", zap.Error(err))
+	if cfg.IsHTTPSEnabled() {
+		server := application.GetServer()
+		logger.Info("Запуск HTTPS сервера",
+			zap.String("address", cfg.ServerAddress),
+			zap.String("cert", cfg.TLSCertFile),
+			zap.String("key", cfg.TLSKeyFile))
+		if err := server.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {
+			logger.Fatal("HTTPS server failed to start", zap.Error(err))
+		}
+	} else {
+		server := application.GetServer()
+		logger.Info("Запуск HTTP сервера", zap.String("address", cfg.ServerAddress))
+		if err := server.ListenAndServe(); err != nil {
+			logger.Fatal("HTTP server failed to start", zap.Error(err))
+		}
 	}
 }

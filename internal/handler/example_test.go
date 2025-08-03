@@ -159,6 +159,10 @@ func ExampleHandler_HandleShortenBatch() {
 	req := httptest.NewRequest(http.MethodPost, "/api/shorten/batch", bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
 
+	// Добавляем userID в контекст для работы с batch
+	ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, "example-user")
+	req = req.WithContext(ctx)
+
 	// Создаем ResponseRecorder для записи ответа
 	rr := httptest.NewRecorder()
 
@@ -172,7 +176,11 @@ func ExampleHandler_HandleShortenBatch() {
 	var response []models.BatchResponseEntry
 	json.Unmarshal(rr.Body.Bytes(), &response)
 	fmt.Printf("Response entries count: %d\n", len(response))
-	fmt.Printf("First entry has correlation_id: %t\n", response[0].CorrelationID == "1")
+	if len(response) > 0 {
+		fmt.Printf("First entry has correlation_id: %t\n", response[0].CorrelationID == "1")
+	} else {
+		fmt.Printf("First entry has correlation_id: %t\n", false)
+	}
 
 	// Output:
 	// Status: 201
