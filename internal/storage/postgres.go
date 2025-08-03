@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/lib/pq" // Используем pq для проверки ошибки
 	"go.uber.org/zap"
 )
@@ -59,7 +60,10 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 	// Используем конкатенацию строк для читаемости SQL
 	createTableSQL := `CREATE TABLE IF NOT EXISTS urls (` +
 		`short_url VARCHAR(255) PRIMARY KEY,` +
-		`original_url TEXT NOT NULL UNIQUE` +
+		`original_url TEXT NOT NULL,` +
+		`user_id VARCHAR(255),` +
+		`is_deleted BOOLEAN DEFAULT FALSE,` +
+		`CONSTRAINT unique_original_url_per_user UNIQUE (original_url, user_id)` +
 		`)`
 	_, err = db.ExecContext(ctx, createTableSQL)
 	if err != nil {
@@ -70,22 +74,32 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 		return nil, fmt.Errorf("table creation error: %w", err)
 	}
 
+	// Добавляем поле is_deleted, если его нет (для существующих таблиц)
+	alterTableSQL := `ALTER TABLE urls ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN DEFAULT FALSE`
+	_, err = db.ExecContext(ctx, alterTableSQL)
+	if err != nil {
+		logger.Warn("Failed to add is_deleted column (may already exist)", zap.Error(err))
+	}
+
 	return &PostgresStorage{
 		db:     db,
 		logger: logger,
 	}, nil
 }
 
-// Save сохраняет URL в хранилище
-func (ps *PostgresStorage) Save(ctx context.Context, shortURL, originalURL string) error {
-	_, err := ps.db.ExecContext(ctx, "INSERT INTO urls (short_url, original_url) VALUES ($1, $2)", shortURL, originalURL)
+// Save сохраняет URL в хранилище, связывая его с userID
+func (ps *PostgresStorage) Save(ctx context.Context, shortURL, originalURL, userID string) error {
+	_, err := ps.db.ExecContext(ctx, "INSERT INTO urls (short_url, original_url, user_id) VALUES ($1, $2, $3)", shortURL, originalURL, userID)
 	if err != nil {
 		// Проверяем, является ли ошибка ошибкой нарушения уникальности от lib/pq
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" { // 23505 = unique_violation
-			// Если это конфликт уникальности (либо short_url, либо original_url),
+			// Если это конфликт уникальности (либо short_url, либо original_url + user_id),
 			// возвращаем нашу специальную ошибку
-			return ErrOriginalURLConflict
+			// Здесь может потребоваться более точная проверка, какой именно constraint вызвал конфликт,
+			// если original_url должен быть глобально уникальным, а не только для пользователя.
+			// В текущей постановке задачи - original_url может повторяться у разных пользователей.
+			return ErrOriginalURLConflict // Или другая специфичная ошибка
 		}
 		// Для всех других ошибок возвращаем их обернутыми
 		return fmt.Errorf("save URL error: %w", err)
@@ -96,13 +110,19 @@ func (ps *PostgresStorage) Save(ctx context.Context, shortURL, originalURL strin
 // Get получает оригинальный URL по короткому
 func (ps *PostgresStorage) Get(ctx context.Context, shortURL string) (string, error) {
 	var originalURL string
-	err := ps.db.QueryRowContext(ctx, "SELECT original_url FROM urls WHERE short_url = $1", shortURL).Scan(&originalURL)
+	var isDeleted bool
+	err := ps.db.QueryRowContext(ctx, "SELECT original_url, is_deleted FROM urls WHERE short_url = $1", shortURL).Scan(&originalURL, &isDeleted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) { // Убедимся, что используется errors.Is
 			return "", ErrURLNotFound
 		}
 		return "", fmt.Errorf("get URL error: %w", err)
 	}
+
+	if isDeleted {
+		return "", ErrURLDeleted
+	}
+
 	return originalURL, nil
 }
 
@@ -123,8 +143,8 @@ func (ps *PostgresStorage) SaveBatch(ctx context.Context, batch []BatchEntry) er
 	// Выполняем вставку для каждой записи в пакете
 	for _, entry := range batch {
 		_, err := tx.ExecContext(ctx,
-			"INSERT INTO urls (short_url, original_url) VALUES ($1, $2) ON CONFLICT (short_url) DO NOTHING",
-			entry.ShortURL, entry.OriginalURL)
+			"INSERT INTO urls (short_url, original_url, user_id) VALUES ($1, $2, $3) ON CONFLICT (short_url) DO NOTHING",
+			entry.ShortURL, entry.OriginalURL, entry.UserID)
 		if err != nil {
 			return fmt.Errorf("insert query execution error for shortURL %s: %w", entry.ShortURL, err)
 		}
@@ -151,6 +171,30 @@ func (ps *PostgresStorage) GetShortURLByOriginal(ctx context.Context, originalUR
 	return shortURL, nil
 }
 
+// GetUserURLs получает все URL, сохраненные пользователем, из PostgreSQL
+func (ps *PostgresStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	rows, err := ps.db.QueryContext(ctx, "SELECT short_url, original_url FROM urls WHERE user_id = $1 AND is_deleted = FALSE", userID)
+	if err != nil {
+		return nil, fmt.Errorf("query user URLs error: %w", err)
+	}
+	defer rows.Close()
+
+	var userURLs []models.UserURL
+	for rows.Next() {
+		var u models.UserURL
+		if err := rows.Scan(&u.ShortURL, &u.OriginalURL); err != nil {
+			return nil, fmt.Errorf("scan user URL error: %w", err)
+		}
+		userURLs = append(userURLs, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return userURLs, nil
+}
+
 // Close закрывает соединение с базой данных
 func (ps *PostgresStorage) Close() error {
 	return ps.db.Close()
@@ -159,4 +203,71 @@ func (ps *PostgresStorage) Close() error {
 // CheckConnection проверяет соединение с базой данных
 func (ps *PostgresStorage) CheckConnection(ctx context.Context) error {
 	return ps.db.PingContext(ctx)
+}
+
+// BatchDelete помечает URL как удаленные для указанного пользователя
+func (ps *PostgresStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
+	if len(shortURLs) == 0 {
+		return nil // Нет смысла открывать транзакцию для пустого списка
+	}
+
+	// Определяем максимальный размер батча для одного SQL запроса
+	// PostgreSQL может обрабатывать массивы до 1GB, но для безопасности ограничиваем до 1000 элементов
+	const maxBatchSize = 1000
+
+	// Если URL меньше чем максимальный размер батча, выполняем за один запрос
+	if len(shortURLs) <= maxBatchSize {
+		return ps.batchDeleteChunk(ctx, shortURLs, userID)
+	}
+
+	// Для больших объемов разбиваем на чанки
+	for i := 0; i < len(shortURLs); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(shortURLs) {
+			end = len(shortURLs)
+		}
+
+		chunk := shortURLs[i:end]
+		if err := ps.batchDeleteChunk(ctx, chunk, userID); err != nil {
+			return fmt.Errorf("batch delete chunk error (chunk %d-%d): %w", i, end-1, err)
+		}
+	}
+
+	return nil
+}
+
+// batchDeleteChunk выполняет массовое удаление для одного чанка URL
+func (ps *PostgresStorage) batchDeleteChunk(ctx context.Context, shortURLs []string, userID string) error {
+	// Начинаем транзакцию
+	tx, err := ps.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("transaction start error: %w", err)
+	}
+	// Гарантируем откат транзакции в случае ошибки
+	defer tx.Rollback() //nolint:errcheck
+
+	// Используем массовый UPDATE с ANY для обновления всех URL за один запрос
+	// Это значительно эффективнее чем цикл отдельных UPDATE'ов
+	query := "UPDATE urls SET is_deleted = TRUE WHERE short_url = ANY($1) AND user_id = $2 AND is_deleted = FALSE"
+
+	// Преобразуем slice в PostgreSQL array
+	result, err := tx.ExecContext(ctx, query, pq.Array(shortURLs), userID)
+	if err != nil {
+		return fmt.Errorf("batch delete query error: %w", err)
+	}
+
+	// Опционально: логируем количество обновленных строк для диагностики
+	if rowsAffected, err := result.RowsAffected(); err == nil {
+		ps.logger.Debug("Batch delete completed",
+			zap.String("userID", userID),
+			zap.Int("requestedURLs", len(shortURLs)),
+			zap.Int64("actuallyDeleted", rowsAffected))
+	}
+
+	// Коммитим транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("transaction commit error: %w", err)
+	}
+
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"go.uber.org/zap"
 )
 
@@ -15,12 +16,14 @@ type URLRecord struct {
 	UUID        string `json:"uuid"`
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
+	UserID      string `json:"user_id,omitempty"`
+	IsDeleted   bool   `json:"is_deleted,omitempty"`
 }
 
 // FileStorage implements URLStorage using a file
 type FileStorage struct {
 	filePath string
-	urls     map[string]string
+	urls     map[string]URLRecord
 	mutex    sync.RWMutex
 	file     *os.File
 	logger   *zap.Logger
@@ -36,7 +39,7 @@ func NewFileStorage(filePath string, logger *zap.Logger) (*FileStorage, error) {
 	fs := &FileStorage{
 		filePath: filePath,
 		file:     file,
-		urls:     make(map[string]string),
+		urls:     make(map[string]URLRecord),
 		logger:   logger,
 	}
 
@@ -65,20 +68,29 @@ func (fs *FileStorage) loadFromFile() error {
 		if err := decoder.Decode(&record); err != nil {
 			return fmt.Errorf("error decoding record: %w", err)
 		}
-		fs.urls[record.ShortURL] = record.OriginalURL
+		fs.urls[record.ShortURL] = record
 	}
 
 	return nil
 }
 
-// Save сохраняет URL в файл
-func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+// Save сохраняет URL в файл, связывая его с userID
+func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL, userID string) error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
+
+	// Проверка на конфликт по originalURL для данного userID
+	for existingShort, record := range fs.urls {
+		if record.OriginalURL == originalURL && record.UserID == userID && !record.IsDeleted && existingShort != shortURL {
+			return ErrOriginalURLConflict
+		}
+	}
 
 	record := URLRecord{
 		ShortURL:    shortURL,
 		OriginalURL: originalURL,
+		UserID:      userID,
+		IsDeleted:   false,
 	}
 
 	data, err := json.Marshal(record)
@@ -90,7 +102,7 @@ func (fs *FileStorage) Save(ctx context.Context, shortURL, originalURL string) e
 		return fmt.Errorf("error writing to file: %w", err)
 	}
 
-	fs.urls[shortURL] = originalURL
+	fs.urls[shortURL] = record
 	return nil
 }
 
@@ -99,8 +111,11 @@ func (fs *FileStorage) Get(ctx context.Context, shortURL string) (string, error)
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
-	if url, exists := fs.urls[shortURL]; exists {
-		return url, nil
+	if record, exists := fs.urls[shortURL]; exists {
+		if record.IsDeleted {
+			return "", ErrURLDeleted
+		}
+		return record.OriginalURL, nil
 	}
 
 	return "", ErrURLNotFound
@@ -115,6 +130,8 @@ func (fs *FileStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error 
 		record := URLRecord{
 			ShortURL:    entry.ShortURL,
 			OriginalURL: entry.OriginalURL,
+			UserID:      entry.UserID,
+			IsDeleted:   false,
 		}
 
 		data, err := json.Marshal(record)
@@ -126,7 +143,7 @@ func (fs *FileStorage) SaveBatch(ctx context.Context, batch []BatchEntry) error 
 			return fmt.Errorf("error writing to file: %w", err)
 		}
 
-		fs.urls[entry.ShortURL] = entry.OriginalURL
+		fs.urls[entry.ShortURL] = record
 	}
 
 	return nil
@@ -137,13 +154,56 @@ func (fs *FileStorage) GetShortURLByOriginal(ctx context.Context, originalURL st
 	fs.mutex.RLock()
 	defer fs.mutex.RUnlock()
 
-	for short, orig := range fs.urls {
-		if orig == originalURL {
+	for short, record := range fs.urls {
+		if record.OriginalURL == originalURL && !record.IsDeleted {
 			return short, nil
 		}
 	}
 
 	return "", ErrURLNotFound
+}
+
+// GetUserURLs получает все URL, сохраненные пользователем, из файла
+func (fs *FileStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+
+	var userURLs []models.UserURL
+	seenURLs := make(map[string]bool) // Для избежания дублирования
+
+	// Необходимо переоткрыть файл для чтения с начала, так как fs.file используется для дозаписи
+	file, err := os.OpenFile(fs.filePath, os.O_RDONLY, 0644)
+	if err != nil {
+		fs.logger.Error("Error opening file for reading user URLs", zap.Error(err))
+		return nil, fmt.Errorf("error opening file for reading: %w", err)
+	}
+	defer file.Close()
+
+	decoder := json.NewDecoder(file)
+	for decoder.More() {
+		var record URLRecord
+		if err := decoder.Decode(&record); err != nil {
+			// Можно логировать ошибку и продолжать, если это не критично
+			fs.logger.Error("Error decoding record for user URLs", zap.Error(err))
+			continue
+		}
+		// Проверяем уникальность и добавляем только неудаленные URL
+		if record.UserID == userID && !record.IsDeleted && !seenURLs[record.ShortURL] {
+			userURLs = append(userURLs, models.UserURL{
+				ShortURL:    record.ShortURL,
+				OriginalURL: record.OriginalURL,
+			})
+			seenURLs[record.ShortURL] = true
+		}
+	}
+
+	if len(userURLs) == 0 {
+		// Если URL-ов нет, можно вернуть пустой слайс и nil ошибку,
+		// или специальную ошибку вроде ErrNoURLsFoundForUser
+		return []models.UserURL{}, nil
+	}
+
+	return userURLs, nil
 }
 
 // CheckConnection проверяет доступность файла
@@ -153,6 +213,67 @@ func (fs *FileStorage) CheckConnection(ctx context.Context) error {
 
 	if fs.file == nil {
 		return fmt.Errorf("file is not open")
+	}
+
+	return nil
+}
+
+// BatchDelete помечает URL как удаленные для указанного пользователя
+func (fs *FileStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
+	// Обновляем записи в памяти
+	for _, shortURL := range shortURLs {
+		if record, exists := fs.urls[shortURL]; exists && record.UserID == userID {
+			record.IsDeleted = true
+			fs.urls[shortURL] = record
+		}
+	}
+
+	// Перезаписываем весь файл с обновленными данными
+	// Это не самый эффективный способ, но простой для реализации
+	if err := fs.rewriteFile(); err != nil {
+		return fmt.Errorf("error rewriting file after batch delete: %w", err)
+	}
+
+	return nil
+}
+
+// rewriteFile перезаписывает файл с текущими данными из памяти
+func (fs *FileStorage) rewriteFile() error {
+	// Закрываем текущий файл
+	if err := fs.file.Close(); err != nil {
+		return fmt.Errorf("error closing file: %w", err)
+	}
+
+	// Открываем файл для перезаписи
+	file, err := os.OpenFile(fs.filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("error opening file for rewrite: %w", err)
+	}
+
+	// Записываем все данные
+	for _, record := range fs.urls {
+		data, err := json.Marshal(record)
+		if err != nil {
+			file.Close()
+			return fmt.Errorf("error marshaling record: %w", err)
+		}
+		if _, err := file.Write(append(data, '\n')); err != nil {
+			file.Close()
+			return fmt.Errorf("error writing record: %w", err)
+		}
+	}
+
+	// Переоткрываем файл в режиме append для дальнейшей работы
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("error closing rewritten file: %w", err)
+	}
+
+	fs.file, err = os.OpenFile(fs.filePath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return fmt.Errorf("error reopening file: %w", err)
 	}
 
 	return nil
