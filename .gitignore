@@ -26,6 +26,16 @@ server.cert
 server.key
 server.crt
 
+# Configuration files (but keep examples)
+config.json
+test_config.json
+dev_config.json
+prod_config.json
+local_config.json
+# Keep example files for documentation
+!config.example.json
+!*.example.json
+
 # Log files
 *.log
 server_log.txt
