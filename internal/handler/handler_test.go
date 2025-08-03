@@ -24,6 +24,7 @@ type mockURLService struct {
 	createShortURLsBatchFunc func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	getStorageFunc           func() storage.URLStorage
 	checkConnectionFunc      func(ctx context.Context) error
+	getUserURLsFunc          func(ctx context.Context, userID string) ([]models.UserURL, error)
 }
 
 func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
@@ -61,18 +62,26 @@ func (m *mockURLService) CheckConnection(ctx context.Context) error {
 	return errors.New("not implemented")
 }
 
+func (m *mockURLService) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	if m.getUserURLsFunc != nil {
+		return m.getUserURLsFunc(ctx, userID)
+	}
+	return nil, errors.New("not implemented")
+}
+
 // mockDatabaseChecker реализует интерфейсы storage.URLStorage и storage.DatabaseChecker для тестов
 type mockDatabaseChecker struct {
-	saveFunc                  func(ctx context.Context, shortURL, originalURL string) error
+	saveFunc                  func(ctx context.Context, shortURL, originalURL, userID string) error
 	getFunc                   func(ctx context.Context, shortURL string) (string, error)
 	saveBatchFunc             func(ctx context.Context, batch []storage.BatchEntry) error
 	getShortURLByOriginalFunc func(ctx context.Context, originalURL string) (string, error)
 	checkConnectionFunc       func(ctx context.Context) error
+	getUserURLsFunc           func(ctx context.Context, userID string) ([]models.UserURL, error)
 }
 
-func (m *mockDatabaseChecker) Save(ctx context.Context, shortURL, originalURL string) error {
+func (m *mockDatabaseChecker) Save(ctx context.Context, shortURL, originalURL, userID string) error {
 	if m.saveFunc != nil {
-		return m.saveFunc(ctx, shortURL, originalURL)
+		return m.saveFunc(ctx, shortURL, originalURL, userID)
 	}
 	return errors.New("not implemented")
 }
@@ -105,17 +114,25 @@ func (m *mockDatabaseChecker) CheckConnection(ctx context.Context) error {
 	return errors.New("not implemented")
 }
 
+func (m *mockDatabaseChecker) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	if m.getUserURLsFunc != nil {
+		return m.getUserURLsFunc(ctx, userID)
+	}
+	return nil, errors.New("not implemented")
+}
+
 // mockStorage реализует интерфейс storage.URLStorage для тестов
 type mockStorage struct {
-	saveFunc                  func(ctx context.Context, shortURL, originalURL string) error
+	saveFunc                  func(ctx context.Context, shortURL, originalURL, userID string) error
 	getFunc                   func(ctx context.Context, shortURL string) (string, error)
 	saveBatchFunc             func(ctx context.Context, batch []storage.BatchEntry) error
 	getShortURLByOriginalFunc func(ctx context.Context, originalURL string) (string, error)
+	getUserURLsFunc           func(ctx context.Context, userID string) ([]models.UserURL, error)
 }
 
-func (m *mockStorage) Save(ctx context.Context, shortURL, originalURL string) error {
+func (m *mockStorage) Save(ctx context.Context, shortURL, originalURL, userID string) error {
 	if m.saveFunc != nil {
-		return m.saveFunc(ctx, shortURL, originalURL)
+		return m.saveFunc(ctx, shortURL, originalURL, userID)
 	}
 	return errors.New("not implemented")
 }
@@ -139,6 +156,13 @@ func (m *mockStorage) GetShortURLByOriginal(ctx context.Context, originalURL str
 		return m.getShortURLByOriginalFunc(ctx, originalURL)
 	}
 	return "", errors.New("not implemented")
+}
+
+func (m *mockStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	if m.getUserURLsFunc != nil {
+		return m.getUserURLsFunc(ctx, userID)
+	}
+	return nil, errors.New("not implemented")
 }
 
 func TestHandleCreateURL(t *testing.T) {

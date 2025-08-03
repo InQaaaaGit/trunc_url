@@ -1,0 +1,8 @@
+!!!!!!!! SERVER MAIN STARTED (fmt.Fprintf to logFile) !!!!!!!!
+2025/05/27 20:47:53 !!!!!!!! SERVER MAIN LOGGING TO LOG FILE (log.Println) !!!!!!!!
+2025/05/27 20:47:53 About to call runServer (simplified)...
+2025/05/27 20:47:53 !!!!!!!! runServer CALLED - SIMPLIFIED (will be in server_log.txt) !!!!!!!!
+2025/05/27 20:47:53 Dummy server ListenAndServe called (will be in server_log.txt)
+2025/05/27 20:48:13 !!!!!!!! runServer FINISHING - SIMPLIFIED (will be in server_log.txt) !!!!!!!!
+2025/05/27 20:48:13 runServer finished or should have (simplified).
+!!!!!!!! SERVER MAIN FINISHED (fmt.Fprintf to logFile) !!!!!!!!

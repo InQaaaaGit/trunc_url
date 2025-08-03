@@ -8,6 +8,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/lib/pq" // Используем pq для проверки ошибки
 	"go.uber.org/zap"
 )
@@ -59,7 +60,9 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 	// Используем конкатенацию строк для читаемости SQL
 	createTableSQL := `CREATE TABLE IF NOT EXISTS urls (` +
 		`short_url VARCHAR(255) PRIMARY KEY,` +
-		`original_url TEXT NOT NULL UNIQUE` +
+		`original_url TEXT NOT NULL,` +
+		`user_id VARCHAR(255),` +
+		`CONSTRAINT unique_original_url_per_user UNIQUE (original_url, user_id)` +
 		`)`
 	_, err = db.ExecContext(ctx, createTableSQL)
 	if err != nil {
@@ -76,16 +79,19 @@ func NewPostgresStorage(dsn string, logger *zap.Logger) (*PostgresStorage, error
 	}, nil
 }
 
-// Save сохраняет URL в хранилище
-func (ps *PostgresStorage) Save(ctx context.Context, shortURL, originalURL string) error {
-	_, err := ps.db.ExecContext(ctx, "INSERT INTO urls (short_url, original_url) VALUES ($1, $2)", shortURL, originalURL)
+// Save сохраняет URL в хранилище, связывая его с userID
+func (ps *PostgresStorage) Save(ctx context.Context, shortURL, originalURL, userID string) error {
+	_, err := ps.db.ExecContext(ctx, "INSERT INTO urls (short_url, original_url, user_id) VALUES ($1, $2, $3)", shortURL, originalURL, userID)
 	if err != nil {
 		// Проверяем, является ли ошибка ошибкой нарушения уникальности от lib/pq
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) && pqErr.Code == "23505" { // 23505 = unique_violation
-			// Если это конфликт уникальности (либо short_url, либо original_url),
+			// Если это конфликт уникальности (либо short_url, либо original_url + user_id),
 			// возвращаем нашу специальную ошибку
-			return ErrOriginalURLConflict
+			// Здесь может потребоваться более точная проверка, какой именно constraint вызвал конфликт,
+			// если original_url должен быть глобально уникальным, а не только для пользователя.
+			// В текущей постановке задачи - original_url может повторяться у разных пользователей.
+			return ErrOriginalURLConflict // Или другая специфичная ошибка
 		}
 		// Для всех других ошибок возвращаем их обернутыми
 		return fmt.Errorf("save URL error: %w", err)
@@ -149,6 +155,30 @@ func (ps *PostgresStorage) GetShortURLByOriginal(ctx context.Context, originalUR
 		return "", fmt.Errorf("error getting short_url by original_url: %w", err)
 	}
 	return shortURL, nil
+}
+
+// GetUserURLs получает все URL, сохраненные пользователем, из PostgreSQL
+func (ps *PostgresStorage) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+	rows, err := ps.db.QueryContext(ctx, "SELECT short_url, original_url FROM urls WHERE user_id = $1", userID)
+	if err != nil {
+		return nil, fmt.Errorf("query user URLs error: %w", err)
+	}
+	defer rows.Close()
+
+	var userURLs []models.UserURL
+	for rows.Next() {
+		var u models.UserURL
+		if err := rows.Scan(&u.ShortURL, &u.OriginalURL); err != nil {
+			return nil, fmt.Errorf("scan user URL error: %w", err)
+		}
+		userURLs = append(userURLs, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows iteration error: %w", err)
+	}
+
+	return userURLs, nil
 }
 
 // Close закрывает соединение с базой данных

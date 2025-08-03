@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/models"
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
+	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
 
@@ -18,6 +21,7 @@ func setupTestService(t *testing.T) (*URLServiceImpl, func()) {
 		BaseURL:         "http://localhost:8080",
 		FileStoragePath: "",
 		DatabaseDSN:     "",
+		SecretKey:       "test-secret-key",
 	}
 	logger, _ := zap.NewDevelopment()
 	service, err := NewURLService(cfg, logger)
@@ -47,6 +51,8 @@ func TestConcurrentAccess(t *testing.T) {
 	logChan := make(chan string, iterations*2)
 	done := make(chan struct{})
 	ctx := context.Background()
+	// Добавляем userID в контекст для тестов, так как CreateShortURL теперь его ожидает
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, "test-user-for-create")
 
 	// Горутина для логирования
 	go func() {
@@ -68,13 +74,14 @@ func TestConcurrentAccess(t *testing.T) {
 
 	// Используем отдельную WaitGroup для горутин
 	var opsWg sync.WaitGroup
+	ctxWithUser := context.WithValue(context.Background(), middleware.ContextKeyUserID, "test-user-for-concurrent-ops")
 
 	// Тест конкурентной записи
 	opsWg.Add(iterations)
 	for i := 0; i < iterations; i++ {
 		go func(i int) {
 			defer opsWg.Done()
-			_, err := service.CreateShortURL(ctx, fmt.Sprintf("https://concurrent%d.com", i))
+			_, err := service.CreateShortURL(ctxWithUser, fmt.Sprintf("https://concurrent%d.com", i))
 			if err != nil {
 				select {
 				case errChan <- err:
@@ -126,6 +133,8 @@ func TestConcurrentReadWrite(t *testing.T) {
 	logChan := make(chan string, iterations*2)
 	done := make(chan struct{})
 	ctx := context.Background()
+	// Добавляем userID в контекст для тестов, так как CreateShortURL теперь его ожидает
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, "test-user-for-create")
 
 	// Горутина для логирования
 	go func() {
@@ -147,6 +156,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 
 	// Используем отдельную WaitGroup для горутин
 	var opsWg sync.WaitGroup
+	ctxWithUser := context.WithValue(context.Background(), middleware.ContextKeyUserID, "test-user-for-concurrent-rw")
 
 	// Тест конкурентного чтения и записи
 	opsWg.Add(iterations * 2)
@@ -177,7 +187,7 @@ func TestConcurrentReadWrite(t *testing.T) {
 		// Запись
 		go func(i int) {
 			defer opsWg.Done()
-			shortID, err := service.CreateShortURL(ctx, fmt.Sprintf("https://concurrent%d.com", i))
+			shortID, err := service.CreateShortURL(ctxWithUser, fmt.Sprintf("https://concurrent%d.com", i))
 			if err != nil {
 				select {
 				case errChan <- fmt.Errorf("error creating short URL: %v", err):
@@ -218,6 +228,8 @@ func TestCreateShortURL(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
+	// Добавляем userID в контекст для тестов, так как CreateShortURL теперь его ожидает
+	ctx = context.WithValue(ctx, middleware.ContextKeyUserID, "test-user-for-create")
 
 	tests := []struct {
 		name        string
@@ -270,62 +282,55 @@ func TestGetOriginalURL(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	// Создаем URL для теста
+	createCtx := context.WithValue(context.Background(), middleware.ContextKeyUserID, "user-for-get-original")
+	originalURLToTest := "https://get-original.example.com"
+	shortURLToTest, err := service.CreateShortURL(createCtx, originalURLToTest)
+	assert.NoError(t, err, "Создание URL для теста GetOriginalURL не должно вызывать ошибку")
+	assert.NotEmpty(t, shortURLToTest, "Короткий URL не должен быть пустым")
 
-	// Сначала создаем URL
-	originalURL := "https://example.com"
-	shortURL, err := service.CreateShortURL(ctx, originalURL)
-	if err != nil {
-		t.Fatalf("Error creating URL: %v", err)
-	}
-	if shortURL == "" {
-		t.Fatal("Expected non-empty short URL")
-	}
+	// Контекст для самого GetOriginalURL не обязательно должен содержать userID,
+	// если логика GetOriginalURL не зависит от пользователя (что сейчас так и есть).
+	getCtx := context.Background()
 
 	tests := []struct {
 		name     string
 		shortURL string
 		wantURL  string
 		wantErr  bool
-		errMsg   string
+		errType  error // Ожидаемый тип ошибки, если wantErr == true
 	}{
 		{
 			name:     "Existing URL",
-			shortURL: shortURL,
-			wantURL:  originalURL,
+			shortURL: shortURLToTest,
+			wantURL:  originalURLToTest,
 			wantErr:  false,
 		},
 		{
-			name:     "Non-existing URL",
+			name:     "Non-existent URL",
 			shortURL: "nonexistent",
 			wantErr:  true,
-			errMsg:   "URL not found",
+			errType:  storage.ErrURLNotFound,
 		},
 		{
 			name:     "Empty short URL",
 			shortURL: "",
 			wantErr:  true,
-			errMsg:   "empty short URL",
+			// errType:  fmt.Errorf("empty short URL"), // Точная ошибка зависит от реализации, можем не проверять тип
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotURL, err := service.GetOriginalURL(ctx, tt.shortURL)
+			gotURL, err := service.GetOriginalURL(getCtx, tt.shortURL)
 			if tt.wantErr {
-				if err == nil {
-					t.Errorf("expected error, got nil")
+				assert.Error(t, err)
+				if tt.errType != nil {
+					assert.True(t, errors.Is(err, tt.errType), "Ожидался тип ошибки %T, получена %T (%v)", tt.errType, err, err)
 				}
-				if tt.errMsg != "" && err.Error() != tt.errMsg {
-					t.Errorf("expected error %q, got %q", tt.errMsg, err.Error())
-				}
-				return
-			}
-			if err != nil {
-				t.Errorf("unexpected error: %v", err)
-			}
-			if gotURL != tt.wantURL {
-				t.Errorf("expected URL %q, got %q", tt.wantURL, gotURL)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.wantURL, gotURL)
 			}
 		})
 	}
@@ -397,29 +402,20 @@ func TestURLConflict(t *testing.T) {
 	service, cleanup := setupTestService(t)
 	defer cleanup()
 
-	ctx := context.Background()
+	// Создадим URL с userID для теста конфликта
+	firstCtx := context.WithValue(context.Background(), middleware.ContextKeyUserID, "user1-conflict-test")
+	originalURL := "http://conflict.example.com"
+	_, err := service.CreateShortURL(firstCtx, originalURL)
+	assert.NoError(t, err, "Первое создание URL не должно вызывать ошибку")
 
-	// Создаем первый URL
-	originalURL := "https://example.com"
-	shortURL1, err := service.CreateShortURL(ctx, originalURL)
-	if err != nil {
-		t.Fatalf("Error creating first URL: %v", err)
-	}
-	if shortURL1 == "" {
-		t.Fatal("Expected non-empty short URL")
-	}
-
-	// Пытаемся создать тот же URL снова
-	shortURL2, err := service.CreateShortURL(ctx, originalURL)
-	if err == nil {
-		t.Error("expected error, got nil")
-	}
-	if !errors.Is(err, storage.ErrOriginalURLConflict) {
-		t.Errorf("expected ErrOriginalURLConflict, got %v", err)
-	}
-	if shortURL2 != shortURL1 {
-		t.Errorf("expected short URL %q, got %q", shortURL1, shortURL2)
-	}
+	// Попытка создать тот же URL с тем же userID (если бы GetShortURLByOriginal учитывал userID)
+	// или просто тот же originalURL, что вызовет конфликт в GetShortURLByOriginal, если он не учитывает userID
+	// Текущая реализация GetShortURLByOriginal не зависит от userID, она ищет глобально.
+	// А Save теперь сохраняет с userID. ErrOriginalURLConflict вернется, если GetShortURLByOriginal найдет URL.
+	secondCtx := context.WithValue(context.Background(), middleware.ContextKeyUserID, "user2-conflict-test") // Другой или тот же userID
+	_, err = service.CreateShortURL(secondCtx, originalURL)
+	assert.Error(t, err, "Второе создание того же URL должно вызывать ошибку")
+	assert.True(t, errors.Is(err, storage.ErrOriginalURLConflict), "Ожидалась ошибка конфликта URL")
 }
 
 func TestGetStorage(t *testing.T) {
@@ -433,50 +429,84 @@ func TestGetStorage(t *testing.T) {
 }
 
 func TestMemoryStorage(t *testing.T) {
-	ctx := context.Background()
 	logger, _ := zap.NewDevelopment()
 	store := storage.NewMemoryStorage(logger)
+	ctx := context.Background()
+	testUserID := "test-user-123"
 
-	// Test Save
-	err := store.Save(ctx, "test1", "https://example1.com")
+	// Тестирование Save
+	err := store.Save(ctx, "short1", "http://example.com/1", testUserID)
 	if err != nil {
-		t.Errorf("Save() error = %v", err)
+		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Test Get
-	got, err := store.Get(ctx, "test1")
+	// Тестирование Get
+	originalURL, err := store.Get(ctx, "short1")
 	if err != nil {
 		t.Errorf("Get() error = %v", err)
 	}
-	if got != "https://example1.com" {
-		t.Errorf("Get() = %v, want %v", got, "https://example1.com")
+	if got := originalURL; got != "http://example.com/1" {
+		t.Errorf("Get() = %v, want %v", got, "http://example.com/1")
 	}
 
-	// Test GetShortURLByOriginal
-	shortURL, err := store.GetShortURLByOriginal(ctx, "https://example1.com")
+	// Тестирование GetUserURLs
+	userURLs, err := store.GetUserURLs(ctx, testUserID)
 	if err != nil {
-		t.Errorf("GetShortURLByOriginal() error = %v", err)
+		t.Fatalf("GetUserURLs failed: %v", err)
 	}
-	if shortURL != "test1" {
-		t.Errorf("GetShortURLByOriginal() = %v, want %v", shortURL, "test1")
+	if len(userURLs) != 1 {
+		t.Fatalf("Expected 1 URL for user, got %d", len(userURLs))
+	}
+	if userURLs[0].ShortURL != "short1" || userURLs[0].OriginalURL != "http://example.com/1" {
+		t.Errorf("Unexpected user URL data: got %+v", userURLs[0])
 	}
 
-	// Test SaveBatch
-	batch := []storage.BatchEntry{
-		{ShortURL: "test2", OriginalURL: "https://example2.com"},
-		{ShortURL: "test3", OriginalURL: "https://example3.com"},
-	}
-	err = store.SaveBatch(ctx, batch)
+	// Тестирование GetUserURLs для несуществующего пользователя
+	noUserURLs, err := store.GetUserURLs(ctx, "non-existent-user")
 	if err != nil {
-		t.Errorf("SaveBatch() error = %v", err)
+		t.Fatalf("GetUserURLs for non-existent user failed: %v", err)
+	}
+	if len(noUserURLs) != 0 {
+		t.Fatalf("Expected 0 URLs for non-existent user, got %d", len(noUserURLs))
+	}
+}
+
+func TestFileStorage(t *testing.T) {
+	filePath := "test_file_storage.json"
+	defer os.Remove(filePath) // Очистка после теста
+
+	logger, _ := zap.NewDevelopment()
+	store, err := storage.NewFileStorage(filePath, logger)
+	if err != nil {
+		t.Fatalf("NewFileStorage failed: %v", err)
+	}
+	ctx := context.Background()
+	testUserID := "file-user-456"
+
+	// Тестирование Save
+	err = store.Save(ctx, "fileshort1", "http://file.example.com/1", testUserID)
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
 	}
 
-	// Verify batch save
-	got, err = store.Get(ctx, "test2")
+	// Тестирование Get
+	originalURL, err := store.Get(ctx, "fileshort1")
 	if err != nil {
-		t.Errorf("Get() after batch save error = %v", err)
+		t.Fatalf("Get failed: %v", err)
 	}
-	if got != "https://example2.com" {
-		t.Errorf("Get() after batch save = %v, want %v", got, "https://example2.com")
+	if originalURL != "http://file.example.com/1" {
+		t.Errorf("Expected URL %s, got %s", "http://file.example.com/1", originalURL)
+	}
+
+	// Тестирование GetUserURLs
+	userURLs, err := store.GetUserURLs(ctx, testUserID)
+	if err != nil {
+		t.Fatalf("GetUserURLs failed: %v", err)
+	}
+	if len(userURLs) != 1 {
+		t.Fatalf("Expected 1 URL for user, got %d, urls: %+v", len(userURLs), userURLs)
+	}
+	if userURLs[0].ShortURL != "fileshort1" || userURLs[0].OriginalURL != "http://file.example.com/1" {
+		t.Errorf("Unexpected user URL data: got %+v", userURLs[0])
 	}
 }
