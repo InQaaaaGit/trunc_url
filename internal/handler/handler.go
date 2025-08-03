@@ -1,3 +1,5 @@
+// Package handler содержит HTTP обработчики для сервиса сокращения URL.
+// Этот пакет предоставляет REST API для создания, получения и управления сокращенными URL.
 package handler
 
 import (
@@ -26,21 +28,33 @@ const (
 	urlNotFoundMessage = "URL not found"
 )
 
-// URLService определяет интерфейс для работы с URL
+// URLService определяет интерфейс для работы с URL сервисом.
+// Содержит методы для создания, получения и управления сокращенными URL.
 type URLService interface {
+	// CreateShortURL создает короткий URL из оригинального
 	CreateShortURL(ctx context.Context, url string) (string, error)
+	// GetOriginalURL получает оригинальный URL по короткому идентификатору
 	GetOriginalURL(ctx context.Context, shortID string) (string, error)
+	// GetStorage возвращает интерфейс хранилища
 	GetStorage() storage.URLStorage
+	// CreateShortURLsBatch создает несколько коротких URL за один запрос
 	CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	// GetUserURLs получает все URL пользователя
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
+	// BatchDeleteURLs помечает URL как удаленные
+	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
 }
 
+// Handler структура для обработки HTTP запросов.
+// Содержит зависимости: сервис URL, конфигурацию и логгер.
 type Handler struct {
 	service service.URLService
 	cfg     *config.Config
 	logger  *zap.Logger
 }
 
+// NewHandler создает новый экземпляр Handler с переданными зависимостями.
+// Принимает сервис URL, конфигурацию и логгер.
 func NewHandler(service service.URLService, cfg *config.Config, logger *zap.Logger) *Handler {
 	return &Handler{
 		service: service,
@@ -129,6 +143,10 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, urlNotFoundMessage, http.StatusBadRequest)
 			return
 		}
+		if errors.Is(err, storage.ErrURLDeleted) {
+			http.Error(w, "URL is deleted", http.StatusGone)
+			return
+		}
 		h.logger.Error("Error getting original URL", zap.Error(err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -139,12 +157,16 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
+// ShortenRequest представляет запрос на создание короткого URL через API.
+// Используется в JSON API эндпоинте /api/shorten.
 type ShortenRequest struct {
-	URL string `json:"url"`
+	URL string `json:"url"` // Оригинальный URL для сокращения
 }
 
+// ShortenResponse представляет ответ с сокращенным URL.
+// Возвращается в JSON API эндпоинте /api/shorten.
 type ShortenResponse struct {
-	Result string `json:"result"`
+	Result string `json:"result"` // Сокращенный URL
 }
 
 // HandleShortenURL обрабатывает POST запрос для создания короткого URL в формате JSON
@@ -318,6 +340,60 @@ func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(urls); err != nil {
 		h.logger.Error("Error writing JSON response for user URLs", zap.Error(err))
 	}
+}
+
+// HandleDeleteUserURLs обрабатывает DELETE запрос для удаления URL пользователя
+func (h *Handler) HandleDeleteUserURLs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID, ok := r.Context().Value(middleware.ContextKeyUserID).(string)
+	if !ok || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, contentTypeJSON) {
+		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		return
+	}
+
+	var shortURLs models.DeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&shortURLs); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			h.logger.Error("Error closing request body", zap.Error(err))
+		}
+	}()
+
+	if len(shortURLs) == 0 {
+		http.Error(w, "Empty URL list", http.StatusBadRequest)
+		return
+	}
+
+	// Асинхронное удаление URL
+	go func() {
+		ctx := context.Background() // Используем новый контекст для фоновой операции
+		if err := h.service.BatchDeleteURLs(ctx, shortURLs, userID); err != nil {
+			h.logger.Error("Error deleting URLs",
+				zap.String("userID", userID),
+				zap.Strings("shortURLs", shortURLs),
+				zap.Error(err))
+		} else {
+			h.logger.Info("URLs deleted successfully",
+				zap.String("userID", userID),
+				zap.Int("count", len(shortURLs)))
+		}
+	}()
+
+	// Возвращаем 202 Accepted немедленно
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // AuthMiddleware проверяет аутентификационную куку
