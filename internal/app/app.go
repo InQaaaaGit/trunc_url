@@ -5,6 +5,7 @@ package app
 import (
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"time"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
@@ -51,7 +52,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}, nil
 }
 
-// Run запускает HTTP сервер приложения.
+// Run запускает HTTP или HTTPS сервер приложения в зависимости от конфигурации.
 // Настраивает маршруты, создает HTTP сервер с таймаутами и начинает прослушивание запросов.
 // Блокирующий вызов - выполняется до остановки сервера.
 //
@@ -66,7 +67,15 @@ func (a *App) Run() error {
 		WriteTimeout: 5 * time.Second,
 	}
 
-	a.logger.Info("Starting server", zap.String("address", a.config.ServerAddress))
+	if a.config.IsHTTPSEnabled() {
+		a.logger.Info("Starting HTTPS server",
+			zap.String("address", a.config.ServerAddress),
+			zap.String("cert", a.config.TLSCertFile),
+			zap.String("key", a.config.TLSKeyFile))
+		return server.ListenAndServeTLS(a.config.TLSCertFile, a.config.TLSKeyFile)
+	}
+
+	a.logger.Info("Starting HTTP server", zap.String("address", a.config.ServerAddress))
 	return server.ListenAndServe()
 }
 
@@ -87,6 +96,9 @@ func (a *App) setupRoutes() {
 	a.router.Get("/ping", a.handler.HandlePing)
 	a.router.Get("/api/user/urls", a.handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", a.handler.HandleDeleteUserURLs)
+
+	// Профилирование (доступно только в debug режиме)
+	a.router.Mount("/debug/pprof", http.DefaultServeMux)
 }
 
 // Configure настраивает все слои приложения.
@@ -117,6 +129,9 @@ func (a *App) Configure() error {
 	a.router.Get("/ping", handler.HandlePing)
 	a.router.Get("/api/user/urls", handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", handler.HandleDeleteUserURLs)
+
+	// Профилирование (доступно только в debug режиме)
+	a.router.Mount("/debug/pprof", http.DefaultServeMux)
 
 	return nil
 }

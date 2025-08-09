@@ -68,14 +68,17 @@ type gzipResponseWriter struct {
 	http.ResponseWriter
 }
 
+// Write записывает данные в сжатый поток
 func (w gzipResponseWriter) Write(b []byte) (int, error) {
 	return w.Writer.Write(b)
 }
 
+// WriteHeader записывает код состояния HTTP ответа
 func (w gzipResponseWriter) WriteHeader(statusCode int) {
 	w.ResponseWriter.WriteHeader(statusCode)
 }
 
+// Header возвращает HTTP заголовки ответа
 func (w gzipResponseWriter) Header() http.Header {
 	return w.ResponseWriter.Header()
 }

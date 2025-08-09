@@ -1,61 +1,62 @@
 package main
 
 import (
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 
-	"github.com/InQaaaaGit/trunc_url.git/internal/config"
+	"github.com/InQaaaaGit/trunc_url.git/internal/buildinfo"
 	"github.com/InQaaaaGit/trunc_url.git/internal/handler"
+	"github.com/InQaaaaGit/trunc_url.git/internal/server"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 )
 
+// Глобальные переменные для информации о сборке
+var (
+	buildVersion = "N/A"
+	buildDate    = "N/A"
+	buildCommit  = "N/A"
+)
+
 func main() {
-	// Инициализация конфигурации
-	cfg, err := config.NewConfig()
-	if err != nil {
-		log.Fatalf("Error loading config: %v", err)
-	}
+	// Создаем и выводим информацию о сборке
+	buildInfo := buildinfo.NewInfo(buildVersion, buildDate, buildCommit)
+	buildInfo.Print()
 
 	// Инициализация логгера
-	logger, err := zap.NewProduction()
-	if err != nil {
-		log.Fatalf("Error initializing logger: %v", err)
-	}
-	defer func() {
-		if err := logger.Sync(); err != nil {
-			log.Printf("Error syncing logger: %v", err)
-		}
-	}()
+	logger, cleanup := server.InitLogger()
+	defer cleanup()
+
+	// Инициализация конфигурации
+	cfg := server.InitConfig(logger)
 
 	// Создание сервиса
-	service, err := service.NewURLService(cfg, logger)
+	urlService, err := service.NewURLService(cfg, logger)
 	if err != nil {
 		logger.Fatal("Error creating service", zap.Error(err))
 	}
 
 	// Создание обработчика
-	handler := handler.NewHandler(service, cfg, logger)
+	h := handler.NewHandler(urlService, cfg, logger)
 
 	// Настройка маршрутизатора
 	r := chi.NewRouter()
 
 	// Middleware
-	r.Use(handler.WithLogging)
-	r.Use(handler.WithGzip)
+	r.Use(h.WithLogging)
+	r.Use(h.WithGzip)
 
 	// Маршруты
-	r.Post("/", handler.HandleCreateURL)
-	r.Get("/{shortID}", handler.HandleRedirect)
-	r.Post("/api/shorten", handler.HandleShortenURL)
-	r.Post("/api/shorten/batch", handler.HandleShortenBatch)
-	r.Get("/ping", handler.HandlePing)
+	r.Post("/", h.HandleCreateURL)
+	r.Get("/{shortID}", h.HandleRedirect)
+	r.Post("/api/shorten", h.HandleShortenURL)
+	r.Post("/api/shorten/batch", h.HandleShortenBatch)
+	r.Get("/ping", h.HandlePing)
 
-	// Запуск сервера
-	server := &http.Server{
+	// Создание HTTP сервера
+	httpServer := &http.Server{
 		Addr:         cfg.ServerAddress,
 		Handler:      r,
 		ReadTimeout:  10 * time.Second,
@@ -63,8 +64,9 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	logger.Info("Starting server", zap.String("address", cfg.ServerAddress))
-	if err := server.ListenAndServe(); err != nil {
+	// Создание и запуск сервера
+	serverWrapper := server.NewHTTPServer(httpServer, cfg, logger)
+	if err := serverWrapper.Start(); err != nil {
 		logger.Fatal("Server error", zap.Error(err))
 	}
 }
