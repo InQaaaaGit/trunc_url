@@ -115,7 +115,7 @@ func TestApplyJSONConfig(t *testing.T) {
 		FileStoragePath:                "urls.json",
 		DatabaseDSN:                    "",
 		SecretKey:                      "your-secret-key",
-		EnableHTTPS:                    "",
+		EnableHTTPS:                    false,
 		TLSCertFile:                    "server.crt",
 		TLSKeyFile:                     "server.key",
 		BatchDeleteMaxWorkers:          3,
@@ -155,8 +155,8 @@ func TestApplyJSONConfig(t *testing.T) {
 	if cfg.SecretKey != "custom-secret" {
 		t.Errorf("Expected SecretKey 'custom-secret', got '%s'", cfg.SecretKey)
 	}
-	if cfg.EnableHTTPS != "true" {
-		t.Errorf("Expected EnableHTTPS 'true', got '%s'", cfg.EnableHTTPS)
+	if !cfg.EnableHTTPS {
+		t.Errorf("Expected EnableHTTPS true, got %t", cfg.EnableHTTPS)
 	}
 	if cfg.TLSCertFile != "custom.crt" {
 		t.Errorf("Expected TLSCertFile 'custom.crt', got '%s'", cfg.TLSCertFile)
@@ -219,7 +219,7 @@ func TestJSONConfigPriority(t *testing.T) {
 		FileStoragePath:                "urls.json",
 		DatabaseDSN:                    "",
 		SecretKey:                      "your-secret-key",
-		EnableHTTPS:                    "",
+		EnableHTTPS:                    false,
 		TLSCertFile:                    "server.crt",
 		TLSKeyFile:                     "server.key",
 		BatchDeleteMaxWorkers:          3,
@@ -245,8 +245,8 @@ func TestJSONConfigPriority(t *testing.T) {
 	}
 
 	// EnableHTTPS должен быть из JSON файла (true)
-	if cfg.EnableHTTPS != "true" {
-		t.Errorf("Expected EnableHTTPS from JSON 'true', got '%s'", cfg.EnableHTTPS)
+	if cfg.EnableHTTPS != true {
+		t.Errorf("Expected EnableHTTPS from JSON 'true', got '%t'", cfg.EnableHTTPS)
 	}
 }
 

@@ -12,7 +12,7 @@ import (
 )
 
 // Config содержит все настройки конфигурации приложения.
-// Поддерживает загрузку из флагов командной строки, переменных окружения и JSON файла.
+// Конфигурация может быть загружена из флагов командной строки, переменных окружения и JSON файла.
 // Приоритет конфигурации: флаги > переменные окружения > JSON файл.
 type Config struct {
 	ServerAddress   string `env:"SERVER_ADDRESS"`    // Адрес для запуска HTTP-сервера (например, ":8080")
@@ -22,7 +22,7 @@ type Config struct {
 	SecretKey       string `env:"SECRET_KEY"`        // Секретный ключ для подписи аутентификационных кук
 
 	// HTTPS настройки
-	EnableHTTPS string `env:"ENABLE_HTTPS"`  // Включить HTTPS сервер
+	EnableHTTPS bool   `env:"ENABLE_HTTPS"`  // Включить HTTPS сервер
 	TLSCertFile string `env:"TLS_CERT_FILE"` // Путь к файлу сертификата TLS
 	TLSKeyFile  string `env:"TLS_KEY_FILE"`  // Путь к файлу приватного ключа TLS
 
@@ -38,11 +38,11 @@ type Config struct {
 // JSONConfig представляет структуру JSON файла конфигурации.
 // Все поля являются указателями для различения "не установлено" от "пустое значение".
 type JSONConfig struct {
-	ServerAddress   *string `json:"server_address,omitempty"`    // Адрес для запуска HTTP-сервера
-	BaseURL         *string `json:"base_url,omitempty"`          // Базовый адрес для сокращенных URL
-	FileStoragePath *string `json:"file_storage_path,omitempty"` // Путь к файлу для хранения URL
-	DatabaseDSN     *string `json:"database_dsn,omitempty"`      // Строка подключения к базе данных PostgreSQL
-	SecretKey       *string `json:"secret_key,omitempty"`        // Секретный ключ для подписи аутентификационных кук
+	ServerAddress   *string `json:"server_address,omitempty"`
+	BaseURL         *string `json:"base_url,omitempty"`
+	FileStoragePath *string `json:"file_storage_path,omitempty"`
+	DatabaseDSN     *string `json:"database_dsn,omitempty"`
+	SecretKey       *string `json:"secret_key,omitempty"`
 
 	// HTTPS настройки
 	EnableHTTPS *bool   `json:"enable_https,omitempty"`  // Включить HTTPS сервер
@@ -50,9 +50,9 @@ type JSONConfig struct {
 	TLSKeyFile  *string `json:"tls_key_file,omitempty"`  // Путь к файлу приватного ключа TLS
 
 	// Параметры для batch deletion
-	BatchDeleteMaxWorkers          *int `json:"batch_delete_max_workers,omitempty"`          // Максимальное количество воркеров для параллельного удаления
-	BatchDeleteBatchSize           *int `json:"batch_delete_batch_size,omitempty"`           // Размер батча для обработки URL
-	BatchDeleteSequentialThreshold *int `json:"batch_delete_sequential_threshold,omitempty"` // Порог для переключения на последовательное удаление
+	BatchDeleteMaxWorkers          *int `json:"batch_delete_max_workers,omitempty"`
+	BatchDeleteBatchSize           *int `json:"batch_delete_batch_size,omitempty"`
+	BatchDeleteSequentialThreshold *int `json:"batch_delete_sequential_threshold,omitempty"`
 }
 
 // loadJSONConfig загружает конфигурацию из JSON файла.
@@ -99,10 +99,8 @@ func (c *Config) applyJSONConfig(jsonConfig *JSONConfig) {
 	}
 
 	// HTTPS настройки
-	if c.EnableHTTPS == "" && jsonConfig.EnableHTTPS != nil {
-		if *jsonConfig.EnableHTTPS {
-			c.EnableHTTPS = "true"
-		}
+	if !c.EnableHTTPS && jsonConfig.EnableHTTPS != nil {
+		c.EnableHTTPS = *jsonConfig.EnableHTTPS
 	}
 	if c.TLSCertFile == "server.crt" && jsonConfig.TLSCertFile != nil {
 		c.TLSCertFile = *jsonConfig.TLSCertFile
@@ -140,7 +138,7 @@ func NewConfig() (*Config, error) {
 		SecretKey:       "your-secret-key", // Значение по умолчанию, лучше изменить
 
 		// HTTPS настройки по умолчанию
-		EnableHTTPS: "",
+		EnableHTTPS: false,
 		TLSCertFile: "server.crt",
 		TLSKeyFile:  "server.key",
 
@@ -161,7 +159,7 @@ func NewConfig() (*Config, error) {
 	flag.StringVar(&cfg.SecretKey, "secret-key", cfg.SecretKey, "секретный ключ для подписи кук")
 
 	// HTTPS флаги
-	flag.StringVar(&cfg.EnableHTTPS, "s", cfg.EnableHTTPS, "включить HTTPS сервер")
+	flag.BoolVar(&cfg.EnableHTTPS, "s", cfg.EnableHTTPS, "включить HTTPS сервер")
 	flag.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "путь к файлу TLS сертификата")
 	flag.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "путь к файлу TLS приватного ключа")
 
@@ -202,7 +200,7 @@ func NewConfig() (*Config, error) {
 }
 
 // IsHTTPSEnabled проверяет, включен ли HTTPS режим.
-// HTTPS включен если флаг -s передан (любое непустое значение) или установлена переменная окружения ENABLE_HTTPS.
+// HTTPS включен если флаг -s установлен в true или переменная окружения ENABLE_HTTPS=true.
 func (c *Config) IsHTTPSEnabled() bool {
-	return c.EnableHTTPS != ""
+	return c.EnableHTTPS
 }
