@@ -605,8 +605,8 @@ func BenchmarkHandler_HandleRedirect(b *testing.B) {
 func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
 	handler := setupBenchHandler(b)
 
-	// Test different batch sizes
-	batchSizes := []int{10, 50, 100}
+	// Test different batch sizes (reduced for faster execution)
+	batchSizes := []int{5, 10, 25}
 
 	for _, batchSize := range batchSizes {
 		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {

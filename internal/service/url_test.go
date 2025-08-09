@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"math/rand"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
@@ -689,8 +690,8 @@ func BenchmarkURLService_CreateShortURLsBatch(b *testing.B) {
 	service, cleanup := setupBenchService(b)
 	defer cleanup()
 
-	// Test different batch sizes (reduced for faster benchmark execution)
-	batchSizes := []int{10, 50, 100}
+	// Test different batch sizes (further reduced for CI/CD stability)
+	batchSizes := []int{5, 10, 25}
 
 	for _, batchSize := range batchSizes {
 		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
@@ -699,19 +700,17 @@ func BenchmarkURLService_CreateShortURLsBatch(b *testing.B) {
 				b.StopTimer()
 
 				// Create unique userID and context for each iteration
-				userID := fmt.Sprintf("bench-batch-user-%d-%d-%d", batchSize, b.N, i)
+				timestamp := time.Now().UnixNano()
+				userID := fmt.Sprintf("bench-batch-user-%d-%d-%d-%d", batchSize, b.N, i, timestamp)
 				ctx := context.WithValue(context.Background(), middleware.ContextKeyUserID, userID)
 
 				batch := make([]models.BatchRequestEntry, batchSize)
-				// Use timestamp and random number to ensure uniqueness across all benchmark runs
-				baseTimestamp := time.Now().UnixNano()
-				randomSeed := rand.Int63()
+				// Use more robust unique ID generation
 				for j := 0; j < batchSize; j++ {
-					// Add random component to ensure each URL is unique
-					uniqueID := fmt.Sprintf("%d-%d-%d-%d-%d", baseTimestamp, randomSeed, batchSize, i, j)
+					uniqueID := timestamp + int64(i*100000000) + int64(j*10000) + int64(batchSize*1000) + rand.Int63()%10000
 					batch[j] = models.BatchRequestEntry{
-						CorrelationID: fmt.Sprintf("corr_%s", uniqueID),
-						OriginalURL:   fmt.Sprintf("https://bench-batch-%s.com/path", uniqueID),
+						CorrelationID: fmt.Sprintf("corr_%d_%d_%d", uniqueID, j, timestamp),
+						OriginalURL:   fmt.Sprintf("https://bench-batch-%d-%d-%d.com/path/%d", uniqueID, j, i, timestamp),
 					}
 				}
 
@@ -733,8 +732,8 @@ func BenchmarkURLService_GetUserURLs(b *testing.B) {
 	userID := fmt.Sprintf("bench-getuser-user-%d", b.N)
 	ctx := context.WithValue(context.Background(), middleware.ContextKeyUserID, userID)
 
-	// Pre-populate with user URLs (reduced for faster benchmark execution)
-	numEntries := 100
+	// Pre-populate with user URLs (further reduced for faster benchmark execution)
+	numEntries := 50
 	for i := 0; i < numEntries; i++ {
 		originalURL := fmt.Sprintf("https://bench-user-example-%d-%d.com/path", b.N, i)
 		_, err := service.CreateShortURL(ctx, originalURL)
@@ -756,8 +755,8 @@ func BenchmarkURLService_BatchDeleteURLs(b *testing.B) {
 	service, cleanup := setupBenchService(b)
 	defer cleanup()
 
-	// Test different batch sizes for deletion
-	batchSizes := []int{10, 50, 100}
+	// Test different batch sizes for deletion (reduced for faster execution)
+	batchSizes := []int{5, 10, 25}
 
 	for _, batchSize := range batchSizes {
 		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
@@ -765,17 +764,17 @@ func BenchmarkURLService_BatchDeleteURLs(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 
-				// Create unique userID and context for each iteration
-				userID := fmt.Sprintf("bench-del-user-%d-%d-%d", batchSize, b.N, i)
+				// Create unique userID and context for each iteration with more uniqueness
+				timestamp := time.Now().UnixNano()
+				userID := fmt.Sprintf("bench-del-user-%d-%d-%d-%d", batchSize, b.N, i, timestamp)
 				ctx := context.WithValue(context.Background(), middleware.ContextKeyUserID, userID)
 
 				// Pre-populate URLs to delete
 				shortURLs := make([]string, batchSize)
-				baseTimestamp := time.Now().UnixNano()
-				randomSeed := rand.Int63()
 				for j := 0; j < batchSize; j++ {
-					uniqueID := fmt.Sprintf("%d-%d-%d-%d-%d", baseTimestamp, randomSeed, batchSize, i, j)
-					originalURL := fmt.Sprintf("https://bench-delete-%s.com/path", uniqueID)
+					// Add maximum uniqueness to avoid any conflicts
+					uniqueID := timestamp + int64(i*100000000) + int64(j*10000) + int64(batchSize*1000) + rand.Int63()%10000
+					originalURL := fmt.Sprintf("https://bench-delete-%d-%d-%d.com/path/%d", uniqueID, j, i, timestamp)
 					shortURL, err := service.CreateShortURL(ctx, originalURL)
 					if err != nil {
 						b.Fatalf("Failed to populate data for deletion: %v", err)

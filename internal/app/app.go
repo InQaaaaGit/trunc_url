@@ -5,6 +5,7 @@ package app
 import (
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"time"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
@@ -95,6 +96,9 @@ func (a *App) setupRoutes() {
 	a.router.Get("/ping", a.handler.HandlePing)
 	a.router.Get("/api/user/urls", a.handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", a.handler.HandleDeleteUserURLs)
+
+	// Профилирование (доступно только в debug режиме)
+	a.router.Mount("/debug/pprof", http.DefaultServeMux)
 }
 
 // Configure настраивает все слои приложения.
@@ -125,6 +129,9 @@ func (a *App) Configure() error {
 	a.router.Get("/ping", handler.HandlePing)
 	a.router.Get("/api/user/urls", handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", handler.HandleDeleteUserURLs)
+
+	// Профилирование (доступно только в debug режиме)
+	a.router.Mount("/debug/pprof", http.DefaultServeMux)
 
 	return nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	_ "net/http/pprof"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/app"
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
