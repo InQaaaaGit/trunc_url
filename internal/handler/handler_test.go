@@ -605,19 +605,19 @@ func BenchmarkHandler_HandleRedirect(b *testing.B) {
 func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
 	handler := setupBenchHandler(b)
 
-	// Test different batch sizes (reduced for faster execution)
-	batchSizes := []int{5, 10, 25}
+	// Minimal batch sizes for CI/CD compatibility
+	batchSizes := []int{1, 2, 3}
 
 	for _, batchSize := range batchSizes {
 		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				batch := make([]models.BatchRequestEntry, batchSize)
-				baseID := i*1000000 + batchSize*1000 // Ensure uniqueness across iterations
 				for j := 0; j < batchSize; j++ {
+					id := i*1000 + j
 					batch[j] = models.BatchRequestEntry{
-						CorrelationID: fmt.Sprintf("corr_%d_%d", baseID, j),
-						OriginalURL:   fmt.Sprintf("https://bench-handler-batch-%d-%d.com/path", baseID, j),
+						CorrelationID: fmt.Sprintf("corr_%d", id),
+						OriginalURL:   fmt.Sprintf("https://handler%d.com/path", id),
 					}
 				}
 
@@ -626,7 +626,7 @@ func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
 				req.Header.Set("Content-Type", "application/json")
 
 				// Add user context
-				userID := fmt.Sprintf("bench-handler-batch-user-%d", b.N)
+				userID := fmt.Sprintf("bench-handler-%d", i)
 				ctx := context.WithValue(req.Context(), middleware.ContextKeyUserID, userID)
 				req = req.WithContext(ctx)
 
