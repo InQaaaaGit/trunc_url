@@ -88,6 +88,12 @@ func (m *mockURLService) BatchDeleteURLs(ctx context.Context, shortURLs []string
 	return nil
 }
 
+// Close реализует интерфейс service.URLService для мок-объекта
+func (m *mockURLService) Close() error {
+	// Мок-сервис не требует освобождения ресурсов
+	return nil
+}
+
 // mockDatabaseChecker реализует интерфейсы storage.URLStorage и storage.DatabaseChecker для тестов
 type mockDatabaseChecker struct {
 	saveFunc                  func(ctx context.Context, shortURL, originalURL, userID string) error
