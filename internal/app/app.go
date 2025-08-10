@@ -5,6 +5,7 @@ package app
 import (
 	"fmt"
 	"net/http"
+	_ "net/http/pprof"
 	"time"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
@@ -17,10 +18,11 @@ import (
 // App представляет основное приложение сервиса сокращения URL.
 // Инкапсулирует конфигурацию, HTTP роутер, логгер и обработчики запросов.
 type App struct {
-	config  *config.Config   // Конфигурация приложения
-	router  *chi.Mux         // HTTP роутер для обработки запросов
-	logger  *zap.Logger      // Логгер для записи событий приложения
-	handler *handler.Handler // Обработчики HTTP запросов
+	config  *config.Config     // Конфигурация приложения
+	router  *chi.Mux           // HTTP роутер для обработки запросов
+	logger  *zap.Logger        // Логгер для записи событий приложения
+	handler *handler.Handler   // Обработчики HTTP запросов
+	service service.URLService // URL сервис для бизнес-логики
 }
 
 // NewApp создает и инициализирует новый экземпляр приложения.
@@ -48,10 +50,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 		router:  chi.NewRouter(),
 		logger:  logger,
 		handler: handler,
+		service: service,
 	}, nil
 }
 
-// Run запускает HTTP сервер приложения.
+// Run запускает HTTP или HTTPS сервер приложения в зависимости от конфигурации.
 // Настраивает маршруты, создает HTTP сервер с таймаутами и начинает прослушивание запросов.
 // Блокирующий вызов - выполняется до остановки сервера.
 //
@@ -66,7 +69,15 @@ func (a *App) Run() error {
 		WriteTimeout: 5 * time.Second,
 	}
 
-	a.logger.Info("Starting server", zap.String("address", a.config.ServerAddress))
+	if a.config.IsHTTPSEnabled() {
+		a.logger.Info("Starting HTTPS server",
+			zap.String("address", a.config.ServerAddress),
+			zap.String("cert", a.config.TLSCertFile),
+			zap.String("key", a.config.TLSKeyFile))
+		return server.ListenAndServeTLS(a.config.TLSCertFile, a.config.TLSKeyFile)
+	}
+
+	a.logger.Info("Starting HTTP server", zap.String("address", a.config.ServerAddress))
 	return server.ListenAndServe()
 }
 
@@ -87,6 +98,9 @@ func (a *App) setupRoutes() {
 	a.router.Get("/ping", a.handler.HandlePing)
 	a.router.Get("/api/user/urls", a.handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", a.handler.HandleDeleteUserURLs)
+
+	// Профилирование (доступно только в debug режиме)
+	a.router.Mount("/debug/pprof", http.DefaultServeMux)
 }
 
 // Configure настраивает все слои приложения.
@@ -100,6 +114,10 @@ func (a *App) Configure() error {
 	if err != nil {
 		return err
 	}
+
+	// Сохраняем сервис в структуре для доступа при shutdown
+	a.service = urlService
+
 	handler := handler.NewHandler(urlService, a.config, a.logger)
 
 	// Подключаем middleware
@@ -118,6 +136,9 @@ func (a *App) Configure() error {
 	a.router.Get("/api/user/urls", handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", handler.HandleDeleteUserURLs)
 
+	// Профилирование (доступно только в debug режиме)
+	a.router.Mount("/debug/pprof", http.DefaultServeMux)
+
 	return nil
 }
 
@@ -134,4 +155,24 @@ func (a *App) GetServer() *http.Server {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// GetService возвращает URL сервис для управления жизненным циклом
+func (a *App) GetService() service.URLService {
+	return a.service
+}
+
+// Close корректно закрывает приложение и освобождает ресурсы
+func (a *App) Close() error {
+	a.logger.Info("Closing application...")
+
+	if a.service != nil {
+		if err := a.service.Close(); err != nil {
+			a.logger.Error("Error closing service", zap.Error(err))
+			return err
+		}
+	}
+
+	a.logger.Info("Application closed successfully")
+	return nil
 }
