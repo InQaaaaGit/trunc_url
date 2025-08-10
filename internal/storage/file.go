@@ -279,12 +279,31 @@ func (fs *FileStorage) rewriteFile() error {
 	return nil
 }
 
+// Sync принудительно синхронизирует данные с диском
+func (fs *FileStorage) Sync() error {
+	fs.mutex.Lock()
+	defer fs.mutex.Unlock()
+
+	if fs.file != nil {
+		if err := fs.file.Sync(); err != nil {
+			return fmt.Errorf("error syncing file: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // Close закрывает файл
 func (fs *FileStorage) Close() error {
 	fs.mutex.Lock()
 	defer fs.mutex.Unlock()
 
 	if fs.file != nil {
+		// Принудительно синхронизируем данные перед закрытием
+		if err := fs.file.Sync(); err != nil {
+			fs.logger.Error("Error syncing file before close", zap.Error(err))
+		}
+
 		if err := fs.file.Close(); err != nil {
 			return fmt.Errorf("error closing file: %w", err)
 		}

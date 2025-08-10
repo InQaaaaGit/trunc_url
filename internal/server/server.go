@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"log"
 	"net/http"
 
@@ -13,6 +14,7 @@ import (
 // Starter интерфейс для запуска сервера
 type Starter interface {
 	Start() error
+	Shutdown(ctx context.Context) error
 }
 
 // HTTPServer представляет HTTP сервер с общей логикой запуска
@@ -37,6 +39,20 @@ func (s *HTTPServer) Start() error {
 		return s.startHTTPS()
 	}
 	return s.startHTTP()
+}
+
+// Shutdown корректно завершает работу сервера
+func (s *HTTPServer) Shutdown(ctx context.Context) error {
+	s.logger.Info("Shutting down server...")
+
+	// Используем встроенный метод graceful shutdown от http.Server
+	if err := s.server.Shutdown(ctx); err != nil {
+		s.logger.Error("Error during server shutdown", zap.Error(err))
+		return err
+	}
+
+	s.logger.Info("Server shutdown completed")
+	return nil
 }
 
 // startHTTPS запускает HTTPS сервер
