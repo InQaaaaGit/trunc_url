@@ -10,6 +10,7 @@ import (
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/config"
 	"github.com/InQaaaaGit/trunc_url.git/internal/handler"
+	"github.com/InQaaaaGit/trunc_url.git/internal/middleware"
 	"github.com/InQaaaaGit/trunc_url.git/internal/service"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
@@ -98,6 +99,9 @@ func (a *App) setupRoutes() {
 	a.router.Get("/ping", a.handler.HandlePing)
 	a.router.Get("/api/user/urls", a.handler.HandleGetUserURLs)
 	a.router.Delete("/api/user/urls", a.handler.HandleDeleteUserURLs)
+
+	// Внутренние API с проверкой доверенной подсети
+	a.router.With(middleware.TrustedSubnetMiddleware(a.config, a.logger)).Get("/api/internal/stats", a.handler.HandleGetStats)
 
 	// Профилирование (доступно только в debug режиме)
 	a.router.Mount("/debug/pprof", http.DefaultServeMux)

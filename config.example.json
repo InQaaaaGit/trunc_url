@@ -9,5 +9,6 @@
     "secret_key": "your-custom-secret-key",
     "batch_delete_max_workers": 5,
     "batch_delete_batch_size": 10,
-    "batch_delete_sequential_threshold": 8
+    "batch_delete_sequential_threshold": 8,
+    "trusted_subnet": "192.168.1.0/24"
 } 

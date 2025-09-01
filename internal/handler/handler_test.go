@@ -88,6 +88,24 @@ func (m *mockURLService) BatchDeleteURLs(ctx context.Context, shortURLs []string
 	return nil
 }
 
+// GetStats реализует интерфейс service.URLService для мок-объекта
+func (m *mockURLService) GetStats(ctx context.Context) (urlsCount int, usersCount int, error error) {
+	// Подсчитываем количество активных URL
+	urlsCount = 0
+	usersSet := make(map[string]bool)
+
+	for shortURL, _ := range m.urls {
+		if !m.deletedURLs[shortURL] {
+			urlsCount++
+			// Для простоты считаем, что каждый URL принадлежит уникальному пользователю
+			usersSet[shortURL] = true
+		}
+	}
+
+	usersCount = len(usersSet)
+	return urlsCount, usersCount, nil
+}
+
 // Close реализует интерфейс service.URLService для мок-объекта
 func (m *mockURLService) Close() error {
 	// Мок-сервис не требует освобождения ресурсов
@@ -150,6 +168,10 @@ func (m *mockDatabaseChecker) BatchDelete(ctx context.Context, shortURLs []strin
 	return nil
 }
 
+func (m *mockDatabaseChecker) GetStats(ctx context.Context) (urlsCount int, usersCount int, error error) {
+	return 0, 0, errors.New("not implemented")
+}
+
 // mockStorage реализует интерфейс storage.URLStorage для тестов
 type mockStorage struct {
 	saveFunc                  func(ctx context.Context, shortURL, originalURL, userID string) error
@@ -196,6 +218,10 @@ func (m *mockStorage) GetUserURLs(ctx context.Context, userID string) ([]models.
 
 func (m *mockStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
 	return nil
+}
+
+func (m *mockStorage) GetStats(ctx context.Context) (urlsCount int, usersCount int, error error) {
+	return 0, 0, errors.New("not implemented")
 }
 
 func TestHandleCreateURL(t *testing.T) {
@@ -642,6 +668,71 @@ func BenchmarkHandler_HandleShortenBatch(b *testing.B) {
 				if w.Code != http.StatusCreated {
 					b.Fatalf("Expected status %d, got %d", http.StatusCreated, w.Code)
 				}
+			}
+		})
+	}
+}
+
+// TestHandleGetStats тестирует обработчик статистики
+func TestHandleGetStats(t *testing.T) {
+	tests := []struct {
+		name           string
+		method         string
+		mockService    *mockURLService
+		expectedStatus int
+		expectedBody   StatsResponse
+	}{
+		{
+			name:   "successful stats retrieval",
+			method: http.MethodGet,
+			mockService: &mockURLService{
+				urls: map[string]string{
+					"abc123": "https://example.com",
+					"def456": "https://example.org",
+				},
+				deletedURLs: map[string]bool{},
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: StatsResponse{
+				URLs:  2,
+				Users: 2,
+			},
+		},
+		{
+			name:           "wrong method",
+			method:         http.MethodPost,
+			mockService:    &mockURLService{},
+			expectedStatus: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Создаем конфигурацию
+			cfg := &config.Config{}
+
+			// Создаем логгер
+			logger, _ := zap.NewDevelopment()
+
+			// Создаем обработчик
+			handler := NewHandler(tt.mockService, cfg, logger)
+
+			// Создаем запрос
+			req := httptest.NewRequest(tt.method, "/api/internal/stats", nil)
+			w := httptest.NewRecorder()
+
+			// Выполняем запрос
+			handler.HandleGetStats(w, req)
+
+			// Проверяем статус
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			// Если ожидаем успешный ответ, проверяем тело
+			if tt.expectedStatus == http.StatusOK {
+				var response StatsResponse
+				err := json.NewDecoder(w.Body).Decode(&response)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedBody, response)
 			}
 		})
 	}

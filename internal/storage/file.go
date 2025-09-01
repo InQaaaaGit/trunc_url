@@ -312,3 +312,28 @@ func (fs *FileStorage) Close() error {
 
 	return nil
 }
+
+// GetStats возвращает статистику хранилища
+func (fs *FileStorage) GetStats(ctx context.Context) (urlsCount int, usersCount int, error error) {
+	fs.mutex.RLock()
+	defer fs.mutex.RUnlock()
+
+	// Подсчитываем количество активных URL (не удаленных)
+	urlsCount = 0
+	usersSet := make(map[string]bool)
+
+	for _, record := range fs.urls {
+		if !record.IsDeleted {
+			urlsCount++
+			usersSet[record.UserID] = true
+		}
+	}
+
+	usersCount = len(usersSet)
+
+	fs.logger.Debug("File storage statistics calculated",
+		zap.Int("urlsCount", urlsCount),
+		zap.Int("usersCount", usersCount))
+
+	return urlsCount, usersCount, nil
+}
