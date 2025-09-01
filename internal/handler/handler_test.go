@@ -94,7 +94,7 @@ func (m *mockURLService) GetStats(ctx context.Context) (urlsCount int, usersCoun
 	urlsCount = 0
 	usersSet := make(map[string]bool)
 
-	for shortURL, _ := range m.urls {
+	for shortURL := range m.urls {
 		if !m.deletedURLs[shortURL] {
 			urlsCount++
 			// Для простоты считаем, что каждый URL принадлежит уникальному пользователю

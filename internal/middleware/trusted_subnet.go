@@ -12,6 +12,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// ContextKeyClientIP определяет ключ для хранения IP-адреса клиента в контексте
+type ContextKeyClientIP struct{}
+
 // TrustedSubnetMiddleware проверяет, что IP-адрес клиента находится в доверенной подсети
 func TrustedSubnetMiddleware(cfg *config.Config, logger *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -68,7 +71,7 @@ func TrustedSubnetMiddleware(cfg *config.Config, logger *zap.Logger) func(http.H
 				zap.String("path", r.URL.Path))
 
 			// Добавляем IP в контекст для возможного использования в обработчиках
-			ctx := context.WithValue(r.Context(), "clientIP", clientIP)
+			ctx := context.WithValue(r.Context(), ContextKeyClientIP{}, clientIP)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
