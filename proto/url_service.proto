@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package urlservice;
+
+option go_package = "github.com/InQaaaaGit/trunc_url.git/proto";
+
+// URLService предоставляет gRPC API для работы с сокращенными URL
+service URLService {
+  // CreateShortURL создает короткий URL из оригинального
+  rpc CreateShortURL(CreateShortURLRequest) returns (CreateShortURLResponse);
+  
+  // GetOriginalURL получает оригинальный URL по короткому идентификатору
+  rpc GetOriginalURL(GetOriginalURLRequest) returns (GetOriginalURLResponse);
+  
+  // CreateShortURLsBatch создает несколько коротких URL за один запрос
+  rpc CreateShortURLsBatch(CreateShortURLsBatchRequest) returns (CreateShortURLsBatchResponse);
+  
+  // GetUserURLs получает все URL пользователя
+  rpc GetUserURLs(GetUserURLsRequest) returns (GetUserURLsResponse);
+  
+  // BatchDeleteURLs помечает URL как удаленные
+  rpc BatchDeleteURLs(BatchDeleteURLsRequest) returns (BatchDeleteURLsResponse);
+  
+  // Ping проверяет соединение с хранилищем
+  rpc Ping(PingRequest) returns (PingResponse);
+  
+  // GetStats возвращает статистику сервиса (внутренний API)
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+}
+
+// CreateShortURLRequest запрос на создание короткого URL
+message CreateShortURLRequest {
+  string original_url = 1;
+}
+
+// CreateShortURLResponse ответ с созданным коротким URL
+message CreateShortURLResponse {
+  string short_url = 1;
+  int32 status_code = 2;
+  string error_message = 3;
+}
+
+// GetOriginalURLRequest запрос на получение оригинального URL
+message GetOriginalURLRequest {
+  string short_id = 1;
+}
+
+// GetOriginalURLResponse ответ с оригинальным URL
+message GetOriginalURLResponse {
+  string original_url = 1;
+  int32 status_code = 2;
+  string error_message = 3;
+}
+
+// BatchRequestEntry представляет одну запись в пакетном запросе
+message BatchRequestEntry {
+  string correlation_id = 1;
+  string original_url = 2;
+}
+
+// BatchResponseEntry представляет одну запись в пакетном ответе
+message BatchResponseEntry {
+  string correlation_id = 1;
+  string short_url = 2;
+}
+
+// CreateShortURLsBatchRequest запрос на пакетное создание URL
+message CreateShortURLsBatchRequest {
+  repeated BatchRequestEntry entries = 1;
+}
+
+// CreateShortURLsBatchResponse ответ с пакетно созданными URL
+message CreateShortURLsBatchResponse {
+  repeated BatchResponseEntry entries = 1;
+  int32 status_code = 2;
+  string error_message = 3;
+}
+
+// UserURL представляет URL пользователя
+message UserURL {
+  string short_url = 1;
+  string original_url = 2;
+}
+
+// GetUserURLsRequest запрос на получение URL пользователя
+message GetUserURLsRequest {
+  string user_id = 1;
+}
+
+// GetUserURLsResponse ответ с URL пользователя
+message GetUserURLsResponse {
+  repeated UserURL urls = 1;
+  int32 status_code = 2;
+  string error_message = 3;
+}
+
+// BatchDeleteURLsRequest запрос на пакетное удаление URL
+message BatchDeleteURLsRequest {
+  repeated string short_urls = 1;
+  string user_id = 2;
+}
+
+// BatchDeleteURLsResponse ответ на пакетное удаление URL
+message BatchDeleteURLsResponse {
+  int32 status_code = 1;
+  string error_message = 2;
+}
+
+// PingRequest запрос на проверку соединения
+message PingRequest {}
+
+// PingResponse ответ на проверку соединения
+message PingResponse {
+  int32 status_code = 1;
+  string error_message = 2;
+}
+
+// GetStatsRequest запрос на получение статистики
+message GetStatsRequest {}
+
+// GetStatsResponse ответ со статистикой
+message GetStatsResponse {
+  int32 urls_count = 1;
+  int32 users_count = 2;
+  int32 status_code = 3;
+  string error_message = 4;
+} 

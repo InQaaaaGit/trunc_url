@@ -55,3 +55,41 @@ git fetch template && git checkout template/main .github
 # Тестирование
 curl -H "X-Real-IP: 192.168.1.100" http://localhost:8080/api/internal/stats
 ```
+
+### gRPC Поддержка
+
+Сервис теперь поддерживает gRPC протокол в дополнение к HTTP API. Все существующие HTTP обработчики доступны через gRPC и функционируют идентично.
+
+#### Конфигурация
+
+```json
+{
+    "grpc_server_address": "localhost:9090",
+    "enable_grpc": true
+}
+```
+
+#### Запуск с gRPC
+
+```bash
+# HTTP + gRPC
+./api -config config.json -grpc -grpc-addr :9090
+
+# Только gRPC
+./api -grpc -grpc-addr :9090
+```
+
+#### HTTP адаптер для тестирования
+
+```bash
+# Создание URL
+curl -X POST "http://localhost:8080/grpc/create?url=https://example.com"
+
+# Получение URL
+curl "http://localhost:8080/grpc/get?id=abc123"
+
+# Статистика
+curl "http://localhost:8080/grpc/stats"
+```
+
+Подробная документация: [README_GRPC.md](README_GRPC.md)
