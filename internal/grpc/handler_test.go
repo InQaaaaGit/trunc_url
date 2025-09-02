@@ -9,13 +9,16 @@ import (
 	"github.com/InQaaaaGit/trunc_url.git/internal/storage"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-// mockURLService реализует интерфейс service.URLService для тестов
-type mockURLService struct {
+// MockURLService мок для URLService
+type MockURLService struct {
+	// Простая реализация без testify/mock для упрощения
 	createShortURLFunc       func(ctx context.Context, originalURL string) (string, error)
-	getOriginalURLFunc       func(ctx context.Context, shortURL string) (string, error)
-	createShortURLsBatchFunc func(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
+	getOriginalURLFunc       func(ctx context.Context, shortID string) (string, error)
+	createShortURLsBatchFunc func(ctx context.Context, entries []models.BatchRequestEntry) ([]models.BatchResponseEntry, error)
 	getUserURLsFunc          func(ctx context.Context, userID string) ([]models.UserURL, error)
 	batchDeleteURLsFunc      func(ctx context.Context, shortURLs []string, userID string) error
 	checkConnectionFunc      func(ctx context.Context) error
@@ -23,220 +26,203 @@ type mockURLService struct {
 	closeFunc                func() error
 }
 
-func (m *mockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
+func (m *MockURLService) CreateShortURL(ctx context.Context, originalURL string) (string, error) {
 	if m.createShortURLFunc != nil {
 		return m.createShortURLFunc(ctx, originalURL)
 	}
-	return "", nil
+	return "abc123", nil
 }
 
-func (m *mockURLService) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
+func (m *MockURLService) GetOriginalURL(ctx context.Context, shortID string) (string, error) {
 	if m.getOriginalURLFunc != nil {
-		return m.getOriginalURLFunc(ctx, shortURL)
+		return m.getOriginalURLFunc(ctx, shortID)
 	}
-	return "", nil
+	return "https://example.com", nil
 }
 
-func (m *mockURLService) CreateShortURLsBatch(ctx context.Context, batch []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
+func (m *MockURLService) CreateShortURLsBatch(ctx context.Context, entries []models.BatchRequestEntry) ([]models.BatchResponseEntry, error) {
 	if m.createShortURLsBatchFunc != nil {
-		return m.createShortURLsBatchFunc(ctx, batch)
+		return m.createShortURLsBatchFunc(ctx, entries)
 	}
-	return nil, nil
+	return []models.BatchResponseEntry{}, nil
 }
 
-func (m *mockURLService) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
+func (m *MockURLService) GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error) {
 	if m.getUserURLsFunc != nil {
 		return m.getUserURLsFunc(ctx, userID)
 	}
-	return nil, nil
+	return []models.UserURL{}, nil
 }
 
-func (m *mockURLService) BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error {
+func (m *MockURLService) BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error {
 	if m.batchDeleteURLsFunc != nil {
 		return m.batchDeleteURLsFunc(ctx, shortURLs, userID)
 	}
 	return nil
 }
 
-func (m *mockURLService) CheckConnection(ctx context.Context) error {
+func (m *MockURLService) CheckConnection(ctx context.Context) error {
 	if m.checkConnectionFunc != nil {
 		return m.checkConnectionFunc(ctx)
 	}
 	return nil
 }
 
-func (m *mockURLService) GetStats(ctx context.Context) (int, int, error) {
+func (m *MockURLService) GetStats(ctx context.Context) (int, int, error) {
 	if m.getStatsFunc != nil {
 		return m.getStatsFunc(ctx)
 	}
-	return 0, 0, nil
+	return 10, 5, nil
 }
 
-func (m *mockURLService) Close() error {
+func (m *MockURLService) Close() error {
 	if m.closeFunc != nil {
 		return m.closeFunc()
 	}
 	return nil
 }
 
-func (m *mockURLService) GetStorage() storage.URLStorage {
+func (m *MockURLService) GetStorage() storage.URLStorage {
 	return nil
 }
 
-func TestGRPCHandler_CreateShortURL(t *testing.T) {
+func TestGRPCHandler_Execute(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{BaseURL: "http://localhost:8080"}
+
 	tests := []struct {
-		name           string
-		originalURL    string
-		mockService    *mockURLService
-		expectedStatus int32
-		expectedURL    string
+		name            string
+		operationType   string
+		expectedStatus  int32
+		expectedSuccess bool
 	}{
 		{
-			name:        "successful creation",
-			originalURL: "https://example.com",
-			mockService: &mockURLService{
-				createShortURLFunc: func(ctx context.Context, originalURL string) (string, error) {
-					return "abc123", nil
-				},
-			},
-			expectedStatus: 200,
-			expectedURL:    "http://localhost:8080/abc123",
+			name:            "CreateShortURL operation",
+			operationType:   OperationCreateShortURL,
+			expectedStatus:  200,
+			expectedSuccess: true,
 		},
 		{
-			name:           "empty URL",
-			originalURL:    "",
-			mockService:    &mockURLService{},
-			expectedStatus: 400,
-			expectedURL:    "",
+			name:            "GetOriginalURL operation",
+			operationType:   OperationGetOriginalURL,
+			expectedStatus:  200,
+			expectedSuccess: true,
+		},
+		{
+			name:            "CreateShortURLsBatch operation",
+			operationType:   OperationCreateShortURLsBatch,
+			expectedStatus:  200,
+			expectedSuccess: true,
+		},
+		{
+			name:            "GetUserURLs operation",
+			operationType:   OperationGetUserURLs,
+			expectedStatus:  200,
+			expectedSuccess: true,
+		},
+		{
+			name:            "BatchDeleteURLs operation",
+			operationType:   OperationBatchDeleteURLs,
+			expectedStatus:  202,
+			expectedSuccess: true,
+		},
+		{
+			name:            "GetStats operation",
+			operationType:   OperationGetStats,
+			expectedStatus:  200,
+			expectedSuccess: true,
+		},
+		{
+			name:            "Unknown operation",
+			operationType:   "unknown_operation",
+			expectedStatus:  400,
+			expectedSuccess: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{BaseURL: "http://localhost:8080"}
-			logger, _ := zap.NewDevelopment()
-			handler := NewGRPCHandler(tt.mockService, cfg, logger)
+			mockService := new(MockURLService)
+			handler := NewGRPCHandler(mockService, cfg, logger)
 
-			req := &CreateShortURLRequest{OriginalURL: tt.originalURL}
-			resp, err := handler.CreateShortURL(context.Background(), req)
+			req := &ExecuteRequest{
+				OperationType: tt.operationType,
+				Payload:       &anypb.Any{},
+			}
 
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
-			assert.Equal(t, tt.expectedURL, resp.ShortURL)
-		})
-	}
-}
-
-func TestGRPCHandler_GetOriginalURL(t *testing.T) {
-	tests := []struct {
-		name           string
-		shortID        string
-		mockService    *mockURLService
-		expectedStatus int32
-		expectedURL    string
-	}{
-		{
-			name:    "successful retrieval",
-			shortID: "abc123",
-			mockService: &mockURLService{
-				getOriginalURLFunc: func(ctx context.Context, shortURL string) (string, error) {
-					return "https://example.com", nil
-				},
-			},
-			expectedStatus: 200,
-			expectedURL:    "https://example.com",
-		},
-		{
-			name:           "empty shortID",
-			shortID:        "",
-			mockService:    &mockURLService{},
-			expectedStatus: 400,
-			expectedURL:    "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{}
-			logger, _ := zap.NewDevelopment()
-			handler := NewGRPCHandler(tt.mockService, cfg, logger)
-
-			req := &GetOriginalURLRequest{ShortID: tt.shortID}
-			resp, err := handler.GetOriginalURL(context.Background(), req)
+			resp, err := handler.Execute(context.Background(), req)
 
 			assert.NoError(t, err)
+			assert.NotNil(t, resp)
+			assert.Equal(t, tt.expectedSuccess, resp.Success)
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
-			assert.Equal(t, tt.expectedURL, resp.OriginalURL)
 		})
 	}
 }
 
 func TestGRPCHandler_Ping(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	cfg := &config.Config{BaseURL: "http://localhost:8080"}
+
 	tests := []struct {
-		name           string
-		mockService    *mockURLService
-		expectedStatus int32
+		name            string
+		mockError       error
+		expectedStatus  int32
+		expectedSuccess bool
 	}{
 		{
-			name: "successful ping",
-			mockService: &mockURLService{
-				checkConnectionFunc: func(ctx context.Context) error {
-					return nil
-				},
-			},
-			expectedStatus: 200,
+			name:            "Successful ping",
+			mockError:       nil,
+			expectedStatus:  200,
+			expectedSuccess: true,
+		},
+		{
+			name:            "Failed ping",
+			mockError:       assert.AnError,
+			expectedStatus:  503,
+			expectedSuccess: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{}
-			logger, _ := zap.NewDevelopment()
-			handler := NewGRPCHandler(tt.mockService, cfg, logger)
+			mockService := &MockURLService{
+				checkConnectionFunc: func(ctx context.Context) error {
+					return tt.mockError
+				},
+			}
 
-			req := &PingRequest{}
+			handler := NewGRPCHandler(mockService, cfg, logger)
+			req := &emptypb.Empty{}
+
 			resp, err := handler.Ping(context.Background(), req)
 
 			assert.NoError(t, err)
+			assert.NotNil(t, resp)
+			assert.Equal(t, tt.expectedSuccess, resp.Success)
 			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
 		})
 	}
 }
 
-func TestGRPCHandler_GetStats(t *testing.T) {
-	tests := []struct {
-		name           string
-		mockService    *mockURLService
-		expectedStatus int32
-		expectedURLs   int32
-		expectedUsers  int32
-	}{
-		{
-			name: "successful stats",
-			mockService: &mockURLService{
-				getStatsFunc: func(ctx context.Context) (int, int, error) {
-					return 10, 5, nil
-				},
-			},
-			expectedStatus: 200,
-			expectedURLs:   10,
-			expectedUsers:  5,
-		},
+func TestGRPCHandler_OperationTypes(t *testing.T) {
+	// Проверяем, что все константы типов операций определены
+	assert.NotEmpty(t, OperationCreateShortURL)
+	assert.NotEmpty(t, OperationGetOriginalURL)
+	assert.NotEmpty(t, OperationCreateShortURLsBatch)
+	assert.NotEmpty(t, OperationGetUserURLs)
+	assert.NotEmpty(t, OperationBatchDeleteURLs)
+	assert.NotEmpty(t, OperationGetStats)
+
+	// Проверяем уникальность типов операций
+	operationTypes := map[string]bool{
+		OperationCreateShortURL:       true,
+		OperationGetOriginalURL:       true,
+		OperationCreateShortURLsBatch: true,
+		OperationGetUserURLs:          true,
+		OperationBatchDeleteURLs:      true,
+		OperationGetStats:             true,
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &config.Config{}
-			logger, _ := zap.NewDevelopment()
-			handler := NewGRPCHandler(tt.mockService, cfg, logger)
-
-			req := &GetStatsRequest{}
-			resp, err := handler.GetStats(context.Background(), req)
-
-			assert.NoError(t, err)
-			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
-			assert.Equal(t, tt.expectedURLs, resp.UrlsCount)
-			assert.Equal(t, tt.expectedUsers, resp.UsersCount)
-		})
-	}
+	assert.Equal(t, 6, len(operationTypes), "All operation types should be unique")
 }

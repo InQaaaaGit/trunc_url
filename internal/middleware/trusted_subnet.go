@@ -24,7 +24,7 @@ func TrustedSubnetMiddleware(cfg *config.Config, logger *zap.Logger) func(http.H
 				logger.Warn("Access denied: trusted subnet not configured",
 					zap.String("path", r.URL.Path),
 					zap.String("remoteAddr", r.RemoteAddr))
-				http.Error(w, "Forbidden", http.StatusForbidden)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
 
@@ -41,7 +41,7 @@ func TrustedSubnetMiddleware(cfg *config.Config, logger *zap.Logger) func(http.H
 				logger.Warn("Invalid client IP address",
 					zap.String("clientIP", clientIP),
 					zap.String("path", r.URL.Path))
-				http.Error(w, "Forbidden", http.StatusForbidden)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
 
@@ -51,7 +51,7 @@ func TrustedSubnetMiddleware(cfg *config.Config, logger *zap.Logger) func(http.H
 				logger.Error("Invalid trusted subnet configuration",
 					zap.String("trustedSubnet", cfg.TrustedSubnet),
 					zap.Error(err))
-				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
 
@@ -61,7 +61,7 @@ func TrustedSubnetMiddleware(cfg *config.Config, logger *zap.Logger) func(http.H
 					zap.String("clientIP", clientIP),
 					zap.String("trustedSubnet", cfg.TrustedSubnet),
 					zap.String("path", r.URL.Path))
-				http.Error(w, "Forbidden", http.StatusForbidden)
+				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
 

@@ -1,15 +1,15 @@
-# PowerShell скрипт для генерации Go кода из proto файла
+# PowerShell script for generating Go code from proto file
 
-Write-Host "Генерация Go кода из proto файла..." -ForegroundColor Green
+Write-Host "Generating Go code from proto file..." -ForegroundColor Green
 
-# Создаем директорию proto если её нет
+# Create proto directory if it doesn't exist
 if (!(Test-Path "proto")) {
     New-Item -ItemType Directory -Path "proto"
 }
 
-# Генерируем Go код из proto файла
+# Generate Go code from proto file
 protoc --go_out=. --go_opt=paths=source_relative `
        --go-grpc_out=. --go-grpc_opt=paths=source_relative `
        proto/url_service.proto
 
-Write-Host "Генерация завершена!" -ForegroundColor Green 
+Write-Host "Generation completed!" -ForegroundColor Green 

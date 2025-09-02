@@ -22,7 +22,7 @@ func GzipMiddleware(next http.Handler) http.Handler {
 		if isGzipped {
 			// Проверяем, что тело запроса не пустое
 			if r.Body == nil {
-				http.Error(w, "Empty request body", http.StatusBadRequest)
+				http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 				return
 			}
 

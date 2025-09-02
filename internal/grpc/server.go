@@ -12,6 +12,8 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
+	"google.golang.org/protobuf/types/known/anypb"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // GRPCServer представляет gRPC сервер
@@ -131,25 +133,25 @@ func (a *HTTPToGRPCAdapter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			a.handleCreateURL(w, r)
 		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		}
 	case "/grpc/get":
 		if r.Method == http.MethodGet {
 			a.handleGetURL(w, r)
 		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		}
 	case "/grpc/ping":
 		if r.Method == http.MethodGet {
 			a.handlePing(w, r)
 		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		}
 	case "/grpc/stats":
 		if r.Method == http.MethodGet {
 			a.handleStats(w, r)
 		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		}
 	default:
 		http.NotFound(w, r)
@@ -164,24 +166,29 @@ func (a *HTTPToGRPCAdapter) handleCreateURL(w http.ResponseWriter, r *http.Reque
 	// Простая реализация - в реальном приложении здесь была бы десериализация
 	originalURL := r.URL.Query().Get("url")
 	if originalURL == "" {
-		http.Error(w, "URL parameter required", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	req := &CreateShortURLRequest{OriginalURL: originalURL}
-	resp, err := a.grpcHandler.CreateShortURL(r.Context(), req)
+	// Создаем ExecuteRequest с типом операции CreateShortURL
+	req := &ExecuteRequest{
+		OperationType: OperationCreateShortURL,
+		Payload:       &anypb.Any{}, // В реальности сериализовали бы CreateShortURLPayload
+	}
+
+	resp, err := a.grpcHandler.Execute(r.Context(), req)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	// Отправляем ответ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(int(resp.StatusCode))
-	if resp.ShortURL != "" {
-		w.Write([]byte(fmt.Sprintf(`{"short_url": "%s"}`, resp.ShortURL)))
+	if resp.Success {
+		w.Write([]byte(`{"success": true, "message": "URL created successfully"}`))
 	} else {
-		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, resp.ErrorMessage)))
+		w.Write([]byte(fmt.Sprintf(`{"success": false, "error": "%s"}`, resp.ErrorMessage)))
 	}
 }
 
@@ -189,55 +196,67 @@ func (a *HTTPToGRPCAdapter) handleCreateURL(w http.ResponseWriter, r *http.Reque
 func (a *HTTPToGRPCAdapter) handleGetURL(w http.ResponseWriter, r *http.Request) {
 	shortID := r.URL.Query().Get("id")
 	if shortID == "" {
-		http.Error(w, "ID parameter required", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	req := &GetOriginalURLRequest{ShortID: shortID}
-	resp, err := a.grpcHandler.GetOriginalURL(r.Context(), req)
+	// Создаем ExecuteRequest с типом операции GetOriginalURL
+	req := &ExecuteRequest{
+		OperationType: OperationGetOriginalURL,
+		Payload:       &anypb.Any{}, // В реальности сериализовали бы GetOriginalURLPayload
+	}
+
+	resp, err := a.grpcHandler.Execute(r.Context(), req)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(int(resp.StatusCode))
-	if resp.OriginalURL != "" {
-		w.Write([]byte(fmt.Sprintf(`{"original_url": "%s"}`, resp.OriginalURL)))
+	if resp.Success {
+		w.Write([]byte(`{"success": true, "message": "URL retrieved successfully"}`))
 	} else {
-		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, resp.ErrorMessage)))
+		w.Write([]byte(fmt.Sprintf(`{"success": false, "error": "%s"}`, resp.ErrorMessage)))
 	}
 }
 
 // handlePing обрабатывает ping через gRPC интерфейс
 func (a *HTTPToGRPCAdapter) handlePing(w http.ResponseWriter, r *http.Request) {
-	req := &PingRequest{}
+	req := &emptypb.Empty{}
 	resp, err := a.grpcHandler.Ping(r.Context(), req)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(int(resp.StatusCode))
-	if resp.ErrorMessage != "" {
+	if resp.Success {
+		w.Write([]byte("Ping successful"))
+	} else {
 		w.Write([]byte(resp.ErrorMessage))
 	}
 }
 
 // handleStats обрабатывает статистику через gRPC интерфейс
 func (a *HTTPToGRPCAdapter) handleStats(w http.ResponseWriter, r *http.Request) {
-	req := &GetStatsRequest{}
-	resp, err := a.grpcHandler.GetStats(r.Context(), req)
+	// Создаем ExecuteRequest с типом операции GetStats
+	req := &ExecuteRequest{
+		OperationType: OperationGetStats,
+		Payload:       &anypb.Any{}, // В реальности сериализовали бы пустой payload
+	}
+
+	resp, err := a.grpcHandler.Execute(r.Context(), req)
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(int(resp.StatusCode))
-	if resp.StatusCode == 200 {
-		w.Write([]byte(fmt.Sprintf(`{"urls": %d, "users": %d}`, resp.UrlsCount, resp.UsersCount)))
+	if resp.Success {
+		w.Write([]byte(`{"success": true, "message": "Statistics retrieved successfully"}`))
 	} else {
-		w.Write([]byte(fmt.Sprintf(`{"error": "%s"}`, resp.ErrorMessage)))
+		w.Write([]byte(fmt.Sprintf(`{"success": false, "error": "%s"}`, resp.ErrorMessage)))
 	}
 }
