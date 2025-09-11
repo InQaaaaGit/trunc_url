@@ -112,7 +112,7 @@ func ExampleURLService_CreateShortURLsBatch() {
 	}
 
 	// Выполняем пакетное создание
-	ctx := context.Background()
+	ctx := context.WithValue(context.Background(), middleware.ContextKeyUserID, "example-user")
 	response, err := svc.CreateShortURLsBatch(ctx, batch)
 	if err != nil {
 		log.Fatal(err)
