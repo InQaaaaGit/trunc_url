@@ -36,6 +36,10 @@ type Config struct {
 
 	// Настройки безопасности для внутренних API
 	TrustedSubnet string `env:"TRUSTED_SUBNET"` // Доверенная подсеть для доступа к внутренним API (CIDR)
+
+	// gRPC настройки
+	GRPCServerAddress string `env:"GRPC_SERVER_ADDRESS"` // Адрес для запуска gRPC-сервера (например, ":9090")
+	EnableGRPC        bool   `env:"ENABLE_GRPC"`         // Включить gRPC сервер
 }
 
 // JSONConfig представляет структуру JSON файла конфигурации.
@@ -59,6 +63,10 @@ type JSONConfig struct {
 
 	// Настройки безопасности для внутренних API
 	TrustedSubnet *string `json:"trusted_subnet,omitempty"` // Доверенная подсеть для доступа к внутренним API (CIDR)
+
+	// gRPC настройки
+	GRPCServerAddress *string `json:"grpc_server_address,omitempty"` // Адрес для запуска gRPC-сервера
+	EnableGRPC        *bool   `json:"enable_grpc,omitempty"`         // Включить gRPC сервер
 }
 
 // loadJSONConfig загружает конфигурацию из JSON файла.
@@ -130,6 +138,14 @@ func (c *Config) applyJSONConfig(jsonConfig *JSONConfig) {
 	if c.TrustedSubnet == "" && jsonConfig.TrustedSubnet != nil {
 		c.TrustedSubnet = *jsonConfig.TrustedSubnet
 	}
+
+	// gRPC настройки
+	if c.GRPCServerAddress == "" && jsonConfig.GRPCServerAddress != nil {
+		c.GRPCServerAddress = *jsonConfig.GRPCServerAddress
+	}
+	if !c.EnableGRPC && jsonConfig.EnableGRPC != nil {
+		c.EnableGRPC = *jsonConfig.EnableGRPC
+	}
 }
 
 // NewConfig создает и инициализирует новую конфигурацию приложения.
@@ -163,6 +179,10 @@ func NewConfig() (*Config, error) {
 
 		// Настройки безопасности по умолчанию
 		TrustedSubnet: "",
+
+		// gRPC настройки по умолчанию
+		GRPCServerAddress: ":9090",
+		EnableGRPC:        false,
 	}
 
 	// Определяем флаги
@@ -188,6 +208,10 @@ func NewConfig() (*Config, error) {
 
 	// Флаг для доверенной подсети
 	flag.StringVar(&cfg.TrustedSubnet, "t", cfg.TrustedSubnet, "доверенная подсеть для доступа к внутренним API (CIDR)")
+
+	// gRPC флаги
+	flag.StringVar(&cfg.GRPCServerAddress, "grpc-addr", cfg.GRPCServerAddress, "адрес запуска gRPC-сервера")
+	flag.BoolVar(&cfg.EnableGRPC, "grpc", cfg.EnableGRPC, "включить gRPC сервер")
 
 	// Сначала парсим флаги чтобы получить путь к конфигурационному файлу
 	flag.Parse()

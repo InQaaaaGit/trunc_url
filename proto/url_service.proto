@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package urlservice;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/InQaaaaGit/trunc_url.git/proto";
+
+// URLService предоставляет gRPC API для работы с сокращенными URL
+// Использует OpaqueAPI подход для упрощения API и улучшения производительности
+service URLService {
+  // Execute выполняет операцию с URL на основе переданного типа сообщения
+  // Это единая точка входа для всех операций с URL
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  
+  // Ping проверяет соединение с хранилищем
+  rpc Ping(google.protobuf.Empty) returns (PingResponse);
+}
+
+// ExecuteRequest универсальный запрос для всех операций с URL
+message ExecuteRequest {
+  // operation_type определяет тип операции
+  string operation_type = 1;
+  
+  // payload содержит данные для операции в формате Any
+  google.protobuf.Any payload = 2;
+}
+
+// ExecuteResponse универсальный ответ для всех операций с URL
+message ExecuteResponse {
+  // success указывает на успешность операции
+  bool success = 1;
+  
+  // status_code HTTP статус код
+  int32 status_code = 2;
+  
+  // error_message сообщение об ошибке (если есть)
+  string error_message = 3;
+  
+  // payload содержит результат операции в формате Any
+  google.protobuf.Any payload = 4;
+}
+
+// PingResponse ответ на проверку соединения
+message PingResponse {
+  bool success = 1;
+  int32 status_code = 2;
+  string error_message = 3;
+}
+
+// ===== Payload типы для различных операций =====
+
+// CreateShortURLPayload данные для создания короткого URL
+message CreateShortURLPayload {
+  string original_url = 1;
+}
+
+// CreateShortURLResult результат создания короткого URL
+message CreateShortURLResult {
+  string short_url = 1;
+}
+
+// GetOriginalURLPayload данные для получения оригинального URL
+message GetOriginalURLPayload {
+  string short_id = 1;
+}
+
+// GetOriginalURLResult результат получения оригинального URL
+message GetOriginalURLResult {
+  string original_url = 1;
+}
+
+// BatchRequestEntry представляет одну запись в пакетном запросе
+message BatchRequestEntry {
+  string correlation_id = 1;
+  string original_url = 2;
+}
+
+// BatchResponseEntry представляет одну запись в пакетном ответе
+message BatchResponseEntry {
+  string correlation_id = 1;
+  string short_url = 2;
+}
+
+// CreateShortURLsBatchPayload данные для пакетного создания URL
+message CreateShortURLsBatchPayload {
+  repeated BatchRequestEntry entries = 1;
+}
+
+// CreateShortURLsBatchResult результат пакетного создания URL
+message CreateShortURLsBatchResult {
+  repeated BatchResponseEntry entries = 1;
+}
+
+// UserURL представляет URL пользователя
+message UserURL {
+  string short_url = 1;
+  string original_url = 2;
+}
+
+// GetUserURLsPayload данные для получения URL пользователя
+message GetUserURLsPayload {
+  string user_id = 1;
+}
+
+// GetUserURLsResult результат получения URL пользователя
+message GetUserURLsResult {
+  repeated UserURL urls = 1;
+}
+
+// BatchDeleteURLsPayload данные для пакетного удаления URL
+message BatchDeleteURLsPayload {
+  repeated string short_urls = 1;
+  string user_id = 2;
+}
+
+// GetStatsResult результат получения статистики
+message GetStatsResult {
+  int32 urls_count = 1;
+  int32 users_count = 2;
+} 

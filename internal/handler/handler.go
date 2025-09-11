@@ -66,19 +66,19 @@ func NewHandler(service service.URLService, cfg *config.Config, logger *zap.Logg
 // HandleCreateURL обрабатывает POST запрос для создания короткого URL
 func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypePlain) && !strings.HasPrefix(contentType, "application/x-gzip") {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Error reading request body", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	defer func() {
@@ -110,7 +110,7 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.Error("Error creating short URL", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -124,13 +124,13 @@ func (h *Handler) HandleCreateURL(w http.ResponseWriter, r *http.Request) {
 // HandleRedirect обрабатывает GET запрос для перенаправления по короткому URL
 func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
 	shortID := strings.Trim(r.URL.Path, "/")
 	if shortID == "" {
-		http.Error(w, "Empty shortID", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
@@ -144,11 +144,11 @@ func (h *Handler) HandleRedirect(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, storage.ErrURLDeleted) {
-			http.Error(w, "URL is deleted", http.StatusGone)
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 			return
 		}
 		h.logger.Error("Error getting original URL", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -172,19 +172,19 @@ type ShortenResponse struct {
 // HandleShortenURL обрабатывает POST запрос для создания короткого URL в формате JSON
 func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var req ShortenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	defer func() {
@@ -217,7 +217,7 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 		}
 
 		h.logger.Error("Error creating short URL in /api/shorten", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -231,20 +231,20 @@ func (h *Handler) HandleShortenURL(w http.ResponseWriter, r *http.Request) {
 // HandleShortenBatch обрабатывает POST запрос для пакетного создания коротких URL
 func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var reqBatch []models.BatchRequestEntry
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "Unable to read request body", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	defer func() {
@@ -254,7 +254,7 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if err := json.Unmarshal(bodyBytes, &reqBatch); err != nil {
-		http.Error(w, "Invalid JSON format", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
@@ -262,7 +262,7 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 	respBatch, err := h.service.CreateShortURLsBatch(ctx, reqBatch)
 	if err != nil {
 		h.logger.Error("Error processing batch", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -277,14 +277,14 @@ func (h *Handler) HandleShortenBatch(w http.ResponseWriter, r *http.Request) {
 // HandlePing обрабатывает запрос на проверку соединения с базой данных
 func (h *Handler) HandlePing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
 	ctx := r.Context()
 	if err := h.service.CheckConnection(ctx); err != nil {
 		h.logger.Error("Ошибка подключения к хранилищу", zap.Error(err))
-		http.Error(w, "Storage is no longer available", http.StatusGone)
+		http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
 		return
 	}
 
@@ -319,14 +319,14 @@ func (h *Handler) WithGzip(next http.Handler) http.Handler {
 func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID, ok := r.Context().Value(middleware.ContextKeyUserID).(string)
 	if !ok || userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	urls, err := h.service.GetUserURLs(r.Context(), userID)
 	if err != nil {
 		h.logger.Error("Error getting user URLs", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -351,7 +351,7 @@ type StatsResponse struct {
 // HandleGetStats обрабатывает GET запрос для получения статистики сервиса
 func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -359,7 +359,7 @@ func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 	urlsCount, usersCount, err := h.service.GetStats(ctx)
 	if err != nil {
 		h.logger.Error("Error getting service statistics", zap.Error(err))
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -378,25 +378,25 @@ func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 // HandleDeleteUserURLs обрабатывает DELETE запрос для удаления URL пользователя
 func (h *Handler) HandleDeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 		return
 	}
 
 	userID, ok := r.Context().Value(middleware.ContextKeyUserID).(string)
 	if !ok || userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 
 	contentType := r.Header.Get("Content-Type")
 	if !strings.HasPrefix(contentType, contentTypeJSON) {
-		http.Error(w, "Invalid Content-Type", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	var shortURLs models.DeleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&shortURLs); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	defer func() {
@@ -406,7 +406,7 @@ func (h *Handler) HandleDeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	if len(shortURLs) == 0 {
-		http.Error(w, "Empty URL list", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
@@ -445,7 +445,7 @@ func (h *Handler) AuthMiddleware(next http.Handler) http.Handler {
 			}
 			http.SetCookie(w, &newCookie)
 		case err != nil:
-			http.Error(w, "Internal server error reading cookie", http.StatusInternalServerError)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		default: // err == nil, cookie exists
 			var valid bool

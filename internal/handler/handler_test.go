@@ -254,7 +254,7 @@ func TestHandleCreateURL(t *testing.T) {
 			body:           "https://example.com",
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusMethodNotAllowed,
-			expectedBody:   "Method not allowed",
+			expectedBody:   http.StatusText(http.StatusMethodNotAllowed),
 		},
 		{
 			name:           "Invalid content type",
@@ -263,7 +263,7 @@ func TestHandleCreateURL(t *testing.T) {
 			body:           "https://example.com",
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusBadRequest,
-			expectedBody:   "Invalid Content-Type",
+			expectedBody:   http.StatusText(http.StatusBadRequest),
 		},
 		{
 			name:           "Empty URL",
@@ -285,7 +285,7 @@ func TestHandleCreateURL(t *testing.T) {
 				},
 			},
 			expectedStatus: http.StatusInternalServerError,
-			expectedBody:   "Internal server error",
+			expectedBody:   http.StatusText(http.StatusInternalServerError),
 		},
 	}
 
@@ -407,7 +407,7 @@ func TestHandlePing(t *testing.T) {
 			method:         http.MethodPost,
 			mockService:    &mockURLService{},
 			expectedStatus: http.StatusMethodNotAllowed,
-			expectedBody:   "Method not allowed\n",
+			expectedBody:   http.StatusText(http.StatusMethodNotAllowed) + "\n",
 		},
 		{
 			name:   "Connection error",
@@ -418,7 +418,7 @@ func TestHandlePing(t *testing.T) {
 				},
 			},
 			expectedStatus: http.StatusGone,
-			expectedBody:   "Storage is no longer available\n",
+			expectedBody:   http.StatusText(http.StatusGone) + "\n",
 		},
 	}
 
