@@ -18,6 +18,11 @@ type Config struct {
 	DatabaseDSN     string `env:"DATABASE_DSN"`      // Строка подключения к базе данных PostgreSQL
 	SecretKey       string `env:"SECRET_KEY"`        // Секретный ключ для подписи аутентификационных кук
 
+	// HTTPS настройки
+	EnableHTTPS string `env:"ENABLE_HTTPS"`  // Включить HTTPS сервер
+	TLSCertFile string `env:"TLS_CERT_FILE"` // Путь к файлу сертификата TLS
+	TLSKeyFile  string `env:"TLS_KEY_FILE"`  // Путь к файлу приватного ключа TLS
+
 	// Параметры для batch deletion
 	BatchDeleteMaxWorkers          int `env:"BATCH_DELETE_MAX_WORKERS"`          // Максимальное количество воркеров для параллельного удаления
 	BatchDeleteBatchSize           int `env:"BATCH_DELETE_BATCH_SIZE"`           // Размер батча для обработки URL
@@ -37,6 +42,11 @@ func NewConfig() (*Config, error) {
 		DatabaseDSN:     "",
 		SecretKey:       "your-secret-key", // Значение по умолчанию, лучше изменить
 
+		// HTTPS настройки по умолчанию
+		EnableHTTPS: "",
+		TLSCertFile: "server.crt",
+		TLSKeyFile:  "server.key",
+
 		// Значения по умолчанию для batch deletion
 		BatchDeleteMaxWorkers:          3,
 		BatchDeleteBatchSize:           5,
@@ -48,7 +58,12 @@ func NewConfig() (*Config, error) {
 	flag.StringVar(&cfg.BaseURL, "b", cfg.BaseURL, "базовый URL для сокращенных ссылок")
 	flag.StringVar(&cfg.FileStoragePath, "f", cfg.FileStoragePath, "путь к файлу для хранения URL")
 	flag.StringVar(&cfg.DatabaseDSN, "d", cfg.DatabaseDSN, "строка подключения к базе данных PostgreSQL")
-	flag.StringVar(&cfg.SecretKey, "s", cfg.SecretKey, "секретный ключ для подписи кук")
+	flag.StringVar(&cfg.SecretKey, "secret-key", cfg.SecretKey, "секретный ключ для подписи кук")
+
+	// HTTPS флаги
+	flag.StringVar(&cfg.EnableHTTPS, "s", cfg.EnableHTTPS, "включить HTTPS сервер")
+	flag.StringVar(&cfg.TLSCertFile, "tls-cert", cfg.TLSCertFile, "путь к файлу TLS сертификата")
+	flag.StringVar(&cfg.TLSKeyFile, "tls-key", cfg.TLSKeyFile, "путь к файлу TLS приватного ключа")
 
 	// Флаги для настройки batch deletion
 	flag.IntVar(&cfg.BatchDeleteMaxWorkers, "batch-max-workers", cfg.BatchDeleteMaxWorkers, "максимальное количество воркеров для параллельного удаления URL")
@@ -64,4 +79,10 @@ func NewConfig() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// IsHTTPSEnabled проверяет, включен ли HTTPS режим.
+// HTTPS включен если флаг -s передан (любое непустое значение) или установлена переменная окружения ENABLE_HTTPS.
+func (c *Config) IsHTTPSEnabled() bool {
+	return c.EnableHTTPS != ""
 }

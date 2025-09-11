@@ -81,8 +81,18 @@ func main() {
 		IdleTimeout:  120 * time.Second,
 	}
 
-	logger.Info("Starting server", zap.String("address", cfg.ServerAddress))
-	if err := server.ListenAndServe(); err != nil {
-		logger.Fatal("Server error", zap.Error(err))
+	if cfg.IsHTTPSEnabled() {
+		logger.Info("Starting HTTPS server",
+			zap.String("address", cfg.ServerAddress),
+			zap.String("cert", cfg.TLSCertFile),
+			zap.String("key", cfg.TLSKeyFile))
+		if err := server.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile); err != nil {
+			logger.Fatal("HTTPS server error", zap.Error(err))
+		}
+	} else {
+		logger.Info("Starting HTTP server", zap.String("address", cfg.ServerAddress))
+		if err := server.ListenAndServe(); err != nil {
+			logger.Fatal("HTTP server error", zap.Error(err))
+		}
 	}
 }

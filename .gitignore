@@ -11,13 +11,51 @@
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 
-# Binaries
-cmd/shortener/main
-cmd/shortener/shortener
-
 # Dependency directories (remove the comment below to include it)
-vendor/
+# vendor/
 
-# IDEs directories
-.idea
-.vscode
+# Go workspace file
+go.work
+
+# TLS certificates and keys (security sensitive)
+*.crt
+*.key
+*.pem
+*.pfx
+server.cert
+server.key
+server.crt
+
+# Log files
+*.log
+server_log.txt
+
+# Application specific files
+urls.json
+coverage.out
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build artifacts
+/build/
+/dist/
+staticlint.exe
+staticlint
+shortener.exe
+shortener
+api.exe
+api
+test_shortener.exe
