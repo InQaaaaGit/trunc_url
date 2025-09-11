@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestNewConfigDefaults проверяет создание конфигурации с значениями по умолчанию
 func TestNewConfigDefaults(t *testing.T) {
 	// Reset flags for clean test
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
@@ -29,6 +30,7 @@ func TestNewConfigDefaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.BatchDeleteSequentialThreshold)
 }
 
+// TestNewConfigEnvironmentVariables проверяет загрузку конфигурации из переменных окружения
 func TestNewConfigEnvironmentVariables(t *testing.T) {
 	// Reset flags for clean test
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
@@ -60,6 +62,7 @@ func TestNewConfigEnvironmentVariables(t *testing.T) {
 	assert.Equal(t, 15, cfg.BatchDeleteSequentialThreshold)
 }
 
+// TestNewConfigCommandLineFlags проверяет загрузку конфигурации из флагов командной строки
 func TestNewConfigCommandLineFlags(t *testing.T) {
 	// Save original args
 	originalArgs := os.Args
@@ -97,6 +100,7 @@ func TestNewConfigCommandLineFlags(t *testing.T) {
 	assert.Equal(t, 10, cfg.BatchDeleteSequentialThreshold)
 }
 
+// TestNewConfigEnvironmentOverridesFlags проверяет приоритет переменных окружения над флагами
 func TestNewConfigEnvironmentOverridesFlags(t *testing.T) {
 	// Save original args
 	originalArgs := os.Args
@@ -127,6 +131,7 @@ func TestNewConfigEnvironmentOverridesFlags(t *testing.T) {
 	assert.Equal(t, "http://env.local", cfg.BaseURL)
 }
 
+// TestConfigAllFields проверяет наличие всех необходимых полей в структуре Config
 func TestConfigAllFields(t *testing.T) {
 	// Test that all expected fields exist in Config struct
 	cfg := &Config{}

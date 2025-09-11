@@ -2,33 +2,25 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"testing"
 )
 
+// TestHTTPSConfig проверяет работу HTTPS конфигурации с булевым типом
 func TestHTTPSConfig(t *testing.T) {
 	tests := []struct {
 		name        string
-		enableHTTPS string
+		enableHTTPS bool
 		expected    bool
 	}{
 		{
-			name:        "HTTPS disabled empty string",
-			enableHTTPS: "",
+			name:        "HTTPS disabled",
+			enableHTTPS: false,
 			expected:    false,
 		},
 		{
-			name:        "HTTPS enabled with true",
-			enableHTTPS: "true",
-			expected:    true,
-		},
-		{
-			name:        "HTTPS enabled with any value",
-			enableHTTPS: "yes",
-			expected:    true,
-		},
-		{
-			name:        "HTTPS enabled with 1",
-			enableHTTPS: "1",
+			name:        "HTTPS enabled",
+			enableHTTPS: true,
 			expected:    true,
 		},
 	}
@@ -46,6 +38,7 @@ func TestHTTPSConfig(t *testing.T) {
 	}
 }
 
+// TestHTTPSConfigFromEnv проверяет загрузку HTTPS конфигурации из переменных окружения
 func TestHTTPSConfigFromEnv(t *testing.T) {
 	// Сохраняем оригинальные значения
 	originalEnableHTTPS := os.Getenv("ENABLE_HTTPS")
@@ -66,8 +59,13 @@ func TestHTTPSConfigFromEnv(t *testing.T) {
 
 	config := &Config{}
 
-	// Имитируем парсинг переменных окружения
-	config.EnableHTTPS = os.Getenv("ENABLE_HTTPS")
+	// Имитируем парсинг переменных окружения для булевого поля
+	if httpsEnv := os.Getenv("ENABLE_HTTPS"); httpsEnv != "" {
+		enabled, err := strconv.ParseBool(httpsEnv)
+		if err == nil {
+			config.EnableHTTPS = enabled
+		}
+	}
 	config.TLSCertFile = os.Getenv("TLS_CERT_FILE")
 	config.TLSKeyFile = os.Getenv("TLS_KEY_FILE")
 
@@ -81,5 +79,28 @@ func TestHTTPSConfigFromEnv(t *testing.T) {
 
 	if config.TLSKeyFile != "test.key" {
 		t.Errorf("Expected TLSKeyFile to be 'test.key', got '%s'", config.TLSKeyFile)
+	}
+}
+
+// TestHTTPSConfigFromEnvFalse проверяет, что HTTPS отключается при ENABLE_HTTPS=false
+func TestHTTPSConfigFromEnvFalse(t *testing.T) {
+	originalEnableHTTPS := os.Getenv("ENABLE_HTTPS")
+	defer func() {
+		os.Setenv("ENABLE_HTTPS", originalEnableHTTPS)
+	}()
+
+	// Устанавливаем значение false
+	os.Setenv("ENABLE_HTTPS", "false")
+
+	config := &Config{}
+	if httpsEnv := os.Getenv("ENABLE_HTTPS"); httpsEnv != "" {
+		enabled, err := strconv.ParseBool(httpsEnv)
+		if err == nil {
+			config.EnableHTTPS = enabled
+		}
+	}
+
+	if config.IsHTTPSEnabled() {
+		t.Error("Expected HTTPS to be disabled when ENABLE_HTTPS=false")
 	}
 }
