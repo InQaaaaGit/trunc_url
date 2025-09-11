@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	_ "net/http/pprof"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/app"
 	"github.com/InQaaaaGit/trunc_url.git/internal/buildinfo"
@@ -37,9 +42,49 @@ func main() {
 		logger.Fatal("Ошибка конфигурации приложения", zap.Error(err))
 	}
 
-	// Создание и запуск сервера
+	// Создание сервера
 	httpServer := server.NewHTTPServer(application.GetServer(), cfg, logger)
-	if err := httpServer.Start(); err != nil {
-		logger.Fatal("Server failed to start", zap.Error(err))
+
+	// Канал для получения сигналов операционной системы
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT)
+
+	// Запуск сервера в горутине
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.Info("Starting server...")
+		if err := httpServer.Start(); err != nil {
+			serverErr <- err
+		}
+	}()
+
+	// Ожидание сигнала завершения или ошибки сервера
+	select {
+	case sig := <-sigChan:
+		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+	case err := <-serverErr:
+		logger.Error("Server error", zap.Error(err))
+		return
+	}
+
+	// Graceful shutdown
+	logger.Info("Initiating graceful shutdown...")
+
+	// Создаем контекст с тайм-аутом для завершения работы
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	// Завершаем работу сервера
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		logger.Error("Error during server shutdown", zap.Error(err))
+	} else {
+		logger.Info("Server shutdown completed successfully")
+	}
+
+	// Закрываем приложение и сохраняем данные
+	if err := application.Close(); err != nil {
+		logger.Error("Error closing application", zap.Error(err))
+	} else {
+		logger.Info("Application resources closed successfully")
 	}
 }

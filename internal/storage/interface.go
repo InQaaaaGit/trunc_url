@@ -58,3 +58,11 @@ type DatabaseChecker interface {
 	// Используется в health check эндпоинте /ping.
 	CheckConnection(ctx context.Context) error
 }
+
+// Closer определяет интерфейс для корректного закрытия хранилища.
+// Реализуется хранилищами, которые требуют освобождения ресурсов при завершении работы.
+type Closer interface {
+	// Close корректно закрывает хранилище и освобождает ресурсы.
+	// Должен вызываться при graceful shutdown для сохранения данных.
+	Close() error
+}

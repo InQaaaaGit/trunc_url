@@ -37,6 +37,8 @@ type URLService interface {
 	GetUserURLs(ctx context.Context, userID string) ([]models.UserURL, error)
 	// BatchDeleteURLs выполняет массовое удаление URL с оптимизацией для больших объемов
 	BatchDeleteURLs(ctx context.Context, shortURLs []string, userID string) error
+	// Close корректно закрывает сервис и освобождает ресурсы хранилища
+	Close() error
 }
 
 // URLServiceImpl реализует интерфейс URLService.
@@ -420,6 +422,22 @@ func (s *URLServiceImpl) BatchDeleteURLs(ctx context.Context, shortURLs []string
 	s.logger.Info("Batch deletion completed successfully",
 		zap.String("userID", userID),
 		zap.Int("totalURLs", len(shortURLs)))
+
+	return nil
+}
+
+// Close корректно закрывает сервис и освобождает ресурсы хранилища
+func (s *URLServiceImpl) Close() error {
+	s.logger.Info("Closing URL service...")
+
+	// Проверяем, реализует ли хранилище интерфейс Closer
+	if closer, ok := s.storage.(storage.Closer); ok {
+		if err := closer.Close(); err != nil {
+			s.logger.Error("Error closing storage", zap.Error(err))
+			return err
+		}
+		s.logger.Info("Storage closed successfully")
+	}
 
 	return nil
 }

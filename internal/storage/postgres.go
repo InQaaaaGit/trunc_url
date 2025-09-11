@@ -197,7 +197,13 @@ func (ps *PostgresStorage) GetUserURLs(ctx context.Context, userID string) ([]mo
 
 // Close закрывает соединение с базой данных
 func (ps *PostgresStorage) Close() error {
-	return ps.db.Close()
+	if ps.db != nil {
+		if err := ps.db.Close(); err != nil {
+			return fmt.Errorf("error closing database connection: %w", err)
+		}
+		ps.logger.Info("Database connection closed")
+	}
+	return nil
 }
 
 // CheckConnection проверяет соединение с базой данных

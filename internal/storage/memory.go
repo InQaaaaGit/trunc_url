@@ -131,6 +131,12 @@ func (ms *MemoryStorage) CheckConnection(ctx context.Context) error {
 	return nil
 }
 
+// Close для memory storage не требует специальных действий
+func (ms *MemoryStorage) Close() error {
+	// Memory storage не требует освобождения внешних ресурсов
+	return nil
+}
+
 // BatchDelete помечает URL как удаленные для указанного пользователя
 func (ms *MemoryStorage) BatchDelete(ctx context.Context, shortURLs []string, userID string) error {
 	ms.mu.Lock()

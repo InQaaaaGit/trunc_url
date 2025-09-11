@@ -18,10 +18,11 @@ import (
 // App представляет основное приложение сервиса сокращения URL.
 // Инкапсулирует конфигурацию, HTTP роутер, логгер и обработчики запросов.
 type App struct {
-	config  *config.Config   // Конфигурация приложения
-	router  *chi.Mux         // HTTP роутер для обработки запросов
-	logger  *zap.Logger      // Логгер для записи событий приложения
-	handler *handler.Handler // Обработчики HTTP запросов
+	config  *config.Config     // Конфигурация приложения
+	router  *chi.Mux           // HTTP роутер для обработки запросов
+	logger  *zap.Logger        // Логгер для записи событий приложения
+	handler *handler.Handler   // Обработчики HTTP запросов
+	service service.URLService // URL сервис для бизнес-логики
 }
 
 // NewApp создает и инициализирует новый экземпляр приложения.
@@ -49,6 +50,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		router:  chi.NewRouter(),
 		logger:  logger,
 		handler: handler,
+		service: service,
 	}, nil
 }
 
@@ -112,6 +114,10 @@ func (a *App) Configure() error {
 	if err != nil {
 		return err
 	}
+
+	// Сохраняем сервис в структуре для доступа при shutdown
+	a.service = urlService
+
 	handler := handler.NewHandler(urlService, a.config, a.logger)
 
 	// Подключаем middleware
@@ -149,4 +155,24 @@ func (a *App) GetServer() *http.Server {
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  120 * time.Second,
 	}
+}
+
+// GetService возвращает URL сервис для управления жизненным циклом
+func (a *App) GetService() service.URLService {
+	return a.service
+}
+
+// Close корректно закрывает приложение и освобождает ресурсы
+func (a *App) Close() error {
+	a.logger.Info("Closing application...")
+
+	if a.service != nil {
+		if err := a.service.Close(); err != nil {
+			a.logger.Error("Error closing service", zap.Error(err))
+			return err
+		}
+	}
+
+	a.logger.Info("Application closed successfully")
+	return nil
 }
