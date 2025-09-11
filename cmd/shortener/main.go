@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/InQaaaaGit/trunc_url.git/internal/app"
@@ -8,7 +9,24 @@ import (
 	"go.uber.org/zap"
 )
 
+// Глобальные переменные для информации о сборке
+var (
+	buildVersion = "N/A"
+	buildDate    = "N/A"
+	buildCommit  = "N/A"
+)
+
+// printBuildInfo выводит информацию о сборке приложения
+func printBuildInfo() {
+	fmt.Printf("Build version: %s\n", buildVersion)
+	fmt.Printf("Build date: %s\n", buildDate)
+	fmt.Printf("Build commit: %s\n", buildCommit)
+}
+
 func main() {
+	// Выводим информацию о сборке
+	printBuildInfo()
+
 	// Инициализация логгера
 	logger, err := zap.NewProduction()
 	if err != nil {

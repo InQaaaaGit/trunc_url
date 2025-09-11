@@ -689,8 +689,8 @@ func BenchmarkURLService_CreateShortURLsBatch(b *testing.B) {
 	service, cleanup := setupBenchService(b)
 	defer cleanup()
 
-	// Test different batch sizes
-	batchSizes := []int{10, 50, 100, 500}
+	// Test different batch sizes (reduced for faster benchmark execution)
+	batchSizes := []int{10, 50, 100}
 
 	for _, batchSize := range batchSizes {
 		b.Run(fmt.Sprintf("BatchSize_%d", batchSize), func(b *testing.B) {
@@ -733,8 +733,8 @@ func BenchmarkURLService_GetUserURLs(b *testing.B) {
 	userID := fmt.Sprintf("bench-getuser-user-%d", b.N)
 	ctx := context.WithValue(context.Background(), middleware.ContextKeyUserID, userID)
 
-	// Pre-populate with user URLs
-	numEntries := 1000
+	// Pre-populate with user URLs (reduced for faster benchmark execution)
+	numEntries := 100
 	for i := 0; i < numEntries; i++ {
 		originalURL := fmt.Sprintf("https://bench-user-example-%d-%d.com/path", b.N, i)
 		_, err := service.CreateShortURL(ctx, originalURL)
