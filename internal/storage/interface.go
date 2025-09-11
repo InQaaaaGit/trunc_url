@@ -48,6 +48,10 @@ type URLStorage interface {
 	// Удаленные URL перестают быть доступными через Get, но остаются в хранилище.
 	// Операция выполняется асинхронно и может обрабатывать большие объемы данных.
 	BatchDelete(ctx context.Context, shortURLs []string, userID string) error
+
+	// GetStats возвращает статистику хранилища
+	// Возвращает количество URL и количество уникальных пользователей
+	GetStats(ctx context.Context) (urlsCount int, usersCount int, error error)
 }
 
 // DatabaseChecker определяет интерфейс для проверки состояния подключения к базе данных.

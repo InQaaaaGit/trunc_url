@@ -342,6 +342,39 @@ func (h *Handler) HandleGetUserURLs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// StatsResponse представляет ответ с статистикой сервиса
+type StatsResponse struct {
+	URLs  int `json:"urls"`  // Количество сокращённых URL в сервисе
+	Users int `json:"users"` // Количество пользователей в сервисе
+}
+
+// HandleGetStats обрабатывает GET запрос для получения статистики сервиса
+func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := r.Context()
+	urlsCount, usersCount, err := h.service.GetStats(ctx)
+	if err != nil {
+		h.logger.Error("Error getting service statistics", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	response := StatsResponse{
+		URLs:  urlsCount,
+		Users: usersCount,
+	}
+
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		h.logger.Error("Error writing JSON response for stats", zap.Error(err))
+	}
+}
+
 // HandleDeleteUserURLs обрабатывает DELETE запрос для удаления URL пользователя
 func (h *Handler) HandleDeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {

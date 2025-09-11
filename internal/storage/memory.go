@@ -151,3 +151,28 @@ func (ms *MemoryStorage) BatchDelete(ctx context.Context, shortURLs []string, us
 
 	return nil
 }
+
+// GetStats возвращает статистику хранилища
+func (ms *MemoryStorage) GetStats(ctx context.Context) (urlsCount int, usersCount int, error error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	// Подсчитываем количество активных URL (не удаленных)
+	urlsCount = 0
+	usersSet := make(map[string]bool)
+
+	for _, entry := range ms.urls {
+		if !entry.IsDeleted {
+			urlsCount++
+			usersSet[entry.UserID] = true
+		}
+	}
+
+	usersCount = len(usersSet)
+
+	ms.logger.Debug("Memory storage statistics calculated",
+		zap.Int("urlsCount", urlsCount),
+		zap.Int("usersCount", usersCount))
+
+	return urlsCount, usersCount, nil
+}

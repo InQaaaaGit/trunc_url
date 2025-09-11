@@ -206,6 +206,30 @@ func (ps *PostgresStorage) Close() error {
 	return nil
 }
 
+// GetStats возвращает статистику хранилища
+func (ps *PostgresStorage) GetStats(ctx context.Context) (urlsCount int, usersCount int, error error) {
+	// Подсчитываем количество активных URL
+	var count int
+	err := ps.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM urls WHERE is_deleted = FALSE").Scan(&count)
+	if err != nil {
+		return 0, 0, fmt.Errorf("error counting URLs: %w", err)
+	}
+	urlsCount = count
+
+	// Подсчитываем количество уникальных пользователей
+	err = ps.db.QueryRowContext(ctx, "SELECT COUNT(DISTINCT user_id) FROM urls WHERE is_deleted = FALSE").Scan(&count)
+	if err != nil {
+		return 0, 0, fmt.Errorf("error counting users: %w", err)
+	}
+	usersCount = count
+
+	ps.logger.Debug("PostgreSQL storage statistics calculated",
+		zap.Int("urlsCount", urlsCount),
+		zap.Int("usersCount", usersCount))
+
+	return urlsCount, usersCount, nil
+}
+
 // CheckConnection проверяет соединение с базой данных
 func (ps *PostgresStorage) CheckConnection(ctx context.Context) error {
 	return ps.db.PingContext(ctx)

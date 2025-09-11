@@ -33,6 +33,9 @@ type Config struct {
 
 	// Конфигурационный файл
 	ConfigFile string `env:"CONFIG"` // Путь к JSON файлу конфигурации
+
+	// Настройки безопасности для внутренних API
+	TrustedSubnet string `env:"TRUSTED_SUBNET"` // Доверенная подсеть для доступа к внутренним API (CIDR)
 }
 
 // JSONConfig представляет структуру JSON файла конфигурации.
@@ -53,6 +56,9 @@ type JSONConfig struct {
 	BatchDeleteMaxWorkers          *int `json:"batch_delete_max_workers,omitempty"`
 	BatchDeleteBatchSize           *int `json:"batch_delete_batch_size,omitempty"`
 	BatchDeleteSequentialThreshold *int `json:"batch_delete_sequential_threshold,omitempty"`
+
+	// Настройки безопасности для внутренних API
+	TrustedSubnet *string `json:"trusted_subnet,omitempty"` // Доверенная подсеть для доступа к внутренним API (CIDR)
 }
 
 // loadJSONConfig загружает конфигурацию из JSON файла.
@@ -119,6 +125,11 @@ func (c *Config) applyJSONConfig(jsonConfig *JSONConfig) {
 	if c.BatchDeleteSequentialThreshold == 5 && jsonConfig.BatchDeleteSequentialThreshold != nil {
 		c.BatchDeleteSequentialThreshold = *jsonConfig.BatchDeleteSequentialThreshold
 	}
+
+	// Настройки безопасности
+	if c.TrustedSubnet == "" && jsonConfig.TrustedSubnet != nil {
+		c.TrustedSubnet = *jsonConfig.TrustedSubnet
+	}
 }
 
 // NewConfig создает и инициализирует новую конфигурацию приложения.
@@ -149,6 +160,9 @@ func NewConfig() (*Config, error) {
 
 		// Конфигурационный файл
 		ConfigFile: "",
+
+		// Настройки безопасности по умолчанию
+		TrustedSubnet: "",
 	}
 
 	// Определяем флаги
@@ -171,6 +185,9 @@ func NewConfig() (*Config, error) {
 	// Флаг для JSON конфигурации
 	flag.StringVar(&cfg.ConfigFile, "c", cfg.ConfigFile, "путь к JSON файлу конфигурации")
 	flag.StringVar(&cfg.ConfigFile, "config", cfg.ConfigFile, "путь к JSON файлу конфигурации")
+
+	// Флаг для доверенной подсети
+	flag.StringVar(&cfg.TrustedSubnet, "t", cfg.TrustedSubnet, "доверенная подсеть для доступа к внутренним API (CIDR)")
 
 	// Сначала парсим флаги чтобы получить путь к конфигурационному файлу
 	flag.Parse()

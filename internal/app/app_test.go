@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -201,4 +202,90 @@ func TestApp_RunContext(t *testing.T) {
 
 	err = server.Shutdown(ctx)
 	assert.NoError(t, err)
+}
+
+func TestApp_InternalStatsEndpoint(t *testing.T) {
+	tests := []struct {
+		name           string
+		trustedSubnet  string
+		clientIP       string
+		xRealIP        string
+		expectedStatus int
+		expectedBody   map[string]interface{}
+	}{
+		{
+			name:           "no trusted subnet configured",
+			trustedSubnet:  "",
+			clientIP:       "192.168.1.100",
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "valid IP in trusted subnet",
+			trustedSubnet:  "192.168.1.0/24",
+			clientIP:       "192.168.1.100",
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"urls":  float64(0), // JSON numbers are unmarshaled as float64
+				"users": float64(0),
+			},
+		},
+		{
+			name:           "valid IP in trusted subnet using X-Real-IP",
+			trustedSubnet:  "192.168.1.0/24",
+			clientIP:       "127.0.0.1",
+			xRealIP:        "192.168.1.100",
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"urls":  float64(0),
+				"users": float64(0),
+			},
+		},
+		{
+			name:           "IP not in trusted subnet",
+			trustedSubnet:  "192.168.1.0/24",
+			clientIP:       "10.0.0.100",
+			expectedStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Создаем конфигурацию
+			cfg := &config.Config{
+				TrustedSubnet: tt.trustedSubnet,
+			}
+
+			// Создаем приложение
+			app, err := NewApp(cfg)
+			assert.NoError(t, err)
+			assert.NotNil(t, app)
+
+			// Настраиваем маршруты
+			app.setupRoutes()
+
+			// Создаем запрос
+			req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			req.RemoteAddr = tt.clientIP + ":12345"
+			if tt.xRealIP != "" {
+				req.Header.Set("X-Real-IP", tt.xRealIP)
+			}
+
+			// Создаем response recorder
+			w := httptest.NewRecorder()
+
+			// Выполняем запрос
+			app.router.ServeHTTP(w, req)
+
+			// Проверяем статус
+			assert.Equal(t, tt.expectedStatus, w.Code)
+
+			// Если ожидаем успешный ответ, проверяем тело
+			if tt.expectedStatus == http.StatusOK {
+				var response map[string]interface{}
+				err := json.NewDecoder(w.Body).Decode(&response)
+				assert.NoError(t, err)
+				assert.Equal(t, tt.expectedBody, response)
+			}
+		})
+	}
 }
